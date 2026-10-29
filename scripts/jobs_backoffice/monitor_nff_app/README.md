@@ -141,8 +141,11 @@ Decisões que não são óbvias:
   `Valor Oracle` chega como float. São a mesma grandeza e precisam virar a mesma coisa antes de
   comparar (`db._num`, que também trata o separador de milhar `'1.234,56'`). Sem isso `'7575,1'` e
   `'7575,10'` contariam como mudança, e a tela mostrava o texto cru porque `Number('32810,15')` é
-  `NaN` no JS. É a mesma família de armadilha que as datas (ver *Datas: nenhuma fonte concorda com a
-  outra*): **nada aqui garante que uma coluna tenha o tipo que o nome sugere.**
+  `NaN` no JS. No `monitor.py` a armadilha é a mesma: `pd.to_numeric('32810,15')` também é `NaN`, e
+  por isso a `Divergência Valor` nunca era calculada fora dos testes (que montam o total como float).
+  Lá a conversão é `monitor._dinheiro`, mesma regra do `db._num`. É a mesma família de armadilha que
+  as datas (ver *Datas: nenhuma fonte concorda com a outra*): **nada aqui garante que uma coluna
+  tenha o tipo que o nome sugere.**
 - **`Divergência Valor` fica fora dos campos vigiados**: é derivado de `Total Fatura` e
   `Valor Oracle`, então registrá-lo duplicaria toda mudança de valor.
 - **A gravação roda no `_base()`, não no `carregar_faturas()`.** Precisa cobrir todos os meses da
@@ -173,8 +176,8 @@ altera linha que já estava certa é ruído que ninguém consegue auditar. Assim
 degrau novo é *não melhorar* uma linha — nunca piorar.
 
 Corolário nas colunas de saída: **coluna nova entra no fim da lista**, nunca no meio (`Fonte
-Pagamento`, `Competência`, `Faturas no Mês`, `NFF Adicionais`, `Valor Oracle`, `Divergência Valor`
-entraram assim). Quem consome lê por nome, mas quem exporta para Excel lê por posição.
+Pagamento`, `Competência`, `Faturas no Mês`, `NFF Adicionais`, `Valor Oracle`, `Divergência Valor`,
+`Fatura Zerada` entraram assim). Quem consome lê por nome, mas quem exporta para Excel lê por posição.
 
 ### Valor da fatura: o painel mostra as DUAS pontas, não escolhe
 
@@ -195,6 +198,24 @@ O `Valor Oracle` depende do **2º passe de chave**, não só do merge exato: NFF
 nesse passe ela aparecia paga com o valor em branco. O passe do valor é uma chamada **separada** da
 do pagamento — ver a seção correspondente do [`tests/README.md`](tests/README.md), que explica por
 que juntá-los quebraria o resgate de pagamento do GO-MNU-01.
+
+### Fatura zerada: chegou, mas não há o que pagar
+
+Fatura com `Total Fatura` = 0 no FattureWeb não tem pagamento — e aparecia como "A pagar" para
+sempre. Caso real em out/2026 (GO-MNU-01 e GO-RIQ-04), confirmado pelo Backoffice: são faturas
+zeradas que não precisam ser pagas.
+
+A marca é a coluna `Fatura Zerada`, e **não** um valor novo em `Status` nem em `Pago`:
+
+- `Status` responde só "chegou no prazo?" — e a fatura zerada chegou (às vezes atrasada, o que
+  continua valendo informar). Um status novo também ficaria fora de toda regra que testa
+  `Chegou`/`Chegou atrasada` (cards, chips, filtros).
+- `Pago` continua booleano porque é campo vigiado do histórico e lido pela exportação; virar um
+  terceiro estado mudaria valor de coluna existente.
+
+Quem traduz é a UI: com `Pago` falso e `Fatura Zerada` verdadeiro, a célula mostra **Zerada** (cinza),
+a fatura sai do card/chip "A pagar" e entra em "Zeradas", e a exportação escreve `Zerada` na coluna
+Pago. Total **ausente** não é zero: sem `Total Fatura`, a fatura segue "A pagar".
 
 ### Quando a fonte nova não existe, o degrau se desliga
 

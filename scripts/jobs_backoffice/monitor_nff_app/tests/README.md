@@ -229,13 +229,26 @@ NFF `047744547` vale `19.142,04` no FattureWeb e `7.525,59` no Oracle, e como o 
 Oracle enquanto o valor exibido vinha do FattureWeb, o painel sugeria que os 19.142,04 tinham sido
 quitados.
 
-Três casos cobertos, e o que cada um protege:
+Casos cobertos, e o que cada um protege:
 
 | caso | invariante |
 |---|---|
 | valores divergentes | as duas colunas saem preenchidas, `Divergência Valor` = FW − Oracle (11.616,45), e o `Pago` continua sendo reportado — a divergência **informa**, não invalida o pagamento |
 | valores iguais | diferença `0.0`, pra UI não marcar ⚠ em fatura correta |
 | sem `FATURA_VALOR` na base | fatura ainda não lançada no Oracle (ou fixture antiga sem a coluna) sai com as duas vazias, **não** como divergência do total inteiro — senão todo mês novo apareceria vermelho |
+| total do FW em texto BR (`'19.142,04'`) | a divergência é calculada (11.616,45) e o `Total Fatura` exibido continua o texto da fonte. É como o dado chega de verdade — os casos acima usam float e por isso passavam enquanto, em produção, `pd.to_numeric` devolvia `NaN` e a divergência nunca aparecia |
+
+`_dinheiro` tem teste próprio com os formatos que a conversão precisa aceitar: `'32810,15'`,
+`'1.234,56'`, `'0,0'`, `'7525.59'`, float, e vazio/ilegível virando `NaN`.
+
+### Fatura zerada (`Fatura Zerada`)
+
+Fatura de valor zero não tem o que pagar (out/2026, duas usinas Equatorial GO). Dois casos:
+
+| caso | invariante |
+|---|---|
+| `TOTAL_DA_FATURA = '0,0'`, sem pagamento | `Fatura Zerada` verdadeiro, `Pago` **continua falso** (não houve pagamento) e o `Status` de chegada não muda |
+| sem `TOTAL_DA_FATURA` | `Fatura Zerada` falso — total desconhecido não é zero, a fatura segue "A pagar" |
 
 **O valor também depende do 2º passe de chave.** Na primeira versão da coluna, toda NFF com
 **zero à esquerda** aparecia paga com `Valor Oracle` vazio — visível no painel como um padrão

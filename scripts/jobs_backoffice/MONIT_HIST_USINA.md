@@ -38,8 +38,10 @@ Sim: `mes_pasta_rateio` e `mes_envio` costumam ser o mesmo mês escrito de duas 
 um não quebra nada, só produz um arquivo errado, silenciosamente.
 
 Há ainda `base_gd`, a raiz da pasta *"Acompanhamento - Operação GD"* no OneDrive. É a única coisa
-que muda entre máquinas — `folder_hist` e a pasta de rateio são derivados dela. A linha comentada
-logo acima é o caminho de outra máquina; troque o seu e deixe as duas ali, ajuda quem vier depois.
+que muda entre máquinas — `folder_hist` e a pasta de rateio são derivados dela. **Não edite no
+código**: o default parte da sua home (`~\Serena\Comercializadora - OMG\...`); se a sua pasta
+sincronizada tiver outro nome, defina `BACKOFFICE_GD_DIR` uma vez (ver
+[Caminhos locais](../../README.md#5-caminhos-locais-só-se-o-seu-for-diferente) no README raiz).
 
 ## As etapas
 
@@ -117,8 +119,8 @@ Pré-requisitos: VPN, `scripts/jobs_backoffice/.env`, `PYTHONPATH` apontando par
 o [README raiz](../../README.md#como-rodar)), OneDrive sincronizado **com os arquivos baixados**
 (botão direito na pasta → "Sempre manter neste dispositivo").
 
-1. Abra o [`monit_hist_usina.py`](monit_hist_usina.py) e ajuste as 4 variáveis + `base_gd`
-   (ver a seção acima).
+1. Abra o [`monit_hist_usina.py`](monit_hist_usina.py) e ajuste as 4 variáveis (ver a seção
+   acima). `base_gd` só precisa de `BACKOFFICE_GD_DIR` se o seu caminho fugir do default.
 2. ```powershell
    python scripts\jobs_backoffice\monit_hist_usina.py
    ```
@@ -145,6 +147,4 @@ distribuidora por execução.
 - **A configuração é edição de código.** Cinco valores por execução, sem argumento de linha de
   comando e sem validação cruzada entre eles. Um `argparse` resolveria e evitaria commit acidental
   de configuração de execução.
-- **`base_gd` é um caminho absoluto de máquina** e vai versionado. Enquanto for assim, cada pessoa
-  edita a linha localmente — evite commitar essa alteração junto com mudança de lógica.
 - **Só CPFL Paulista e Equatorial GO** têm leitor. As outras distribuidoras seguem manuais.

@@ -105,6 +105,25 @@ SF_SCHEMA=
 
 Nunca cole esses valores em código, notebook, print ou mensagem.
 
+### 5. Caminhos locais (só se o seu for diferente)
+
+Os scripts montam os caminhos a partir da **home de quem roda** (`C:\Users\<você>\...`), então em
+geral não há nada a fazer. Se a sua pasta estiver em outro lugar, defina a variável de ambiente
+correspondente **uma vez** (com `setx`, e reabra o terminal/VSCode):
+
+| Variável | Default | Usada por |
+| --- | --- | --- |
+| `BACKOFFICE_GD_DIR` | `~\Serena\Comercializadora - OMG\03 - BackOffice\13 - Geração Distribuída\Acompanhamento - Operação GD` | `monit_hist_usina.py`, `extrator_livia.py` |
+| `MONITOR_NFF_ARQUIVO_EXCEL` | `~\Faturas Oracle\CreateQuickInvoices.xlsm` | `monitor_nff_app`, `0_monitoramento_total_nff.py` |
+| `MONITOR_NFF_DB_PATH` | `~\Faturas Oracle\controle_nff.db` | `monitor_nff_app`, `0_monitoramento_total_nff.py` |
+
+O nome da pasta sincronizada do SharePoint varia conforme a pessoa sincronizou (ex.:
+`Comercializadora - Comercializadora\OMG\...`) — esse é o caso típico do `BACKOFFICE_GD_DIR`:
+
+```powershell
+setx BACKOFFICE_GD_DIR "C:\Users\<você>\Serena\<sua pasta>\...\Acompanhamento - Operação GD"
+```
+
 ---
 
 ## Como rodar
@@ -124,8 +143,8 @@ python scripts\jobs_backoffice\faturamento_parceiros\gera_nff_parceiros.py
 ```
 
 Muitos scripts têm um **bloco de configuração no topo** (mês de referência, distribuidora, pasta de
-entrada) e alguns ainda têm **caminhos de máquina** (`C:\Users\<alguém>\...`). Confira esse bloco
-antes de rodar — e veja a seção abaixo antes de commitar a alteração.
+entrada). Confira esse bloco antes de rodar — e veja a seção abaixo antes de commitar a alteração.
+Os caminhos já partem da sua home; se algum não bater, veja [Caminhos locais](#5-caminhos-locais-só-se-o-seu-for-diferente).
 
 ### Testes
 
@@ -175,6 +194,7 @@ tabela do [README de lá](scripts/jobs_backoffice/jobs_adhoc/README.md).
 
 ### Mudou o caminho da sua máquina?
 
-Ajustar um caminho para rodar localmente é normal. **Não commite essa alteração junto com mudança
-de lógica** — o próximo que puxar vai rodar com o seu caminho. O ideal, quando mexer num script, é
-mover o caminho para uma variável de ambiente ou para o `conf`.
+**Não escreva `C:\Users\<seu usuário>\...` no código** — o próximo que puxar vai rodar com o seu
+caminho. Monte a partir da home (`Path.home()` / `os.path.expanduser("~")`) e, se a pasta puder
+variar entre pessoas, deixe uma variável de ambiente sobrescrever o default
+(`os.getenv("X") or <default>`), e registre-a na tabela de [Caminhos locais](#5-caminhos-locais-só-se-o-seu-for-diferente).

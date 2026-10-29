@@ -14,9 +14,9 @@ ferramenta de mão.
 - **Todos têm `if __name__ == "__main__":`** — importar não dispara. É o que permite testá-los.
 - **Nome começando com dígito não é importável** por `import` normal. Em teste, use
   `load_job("jobs_adhoc/7_extracao_nff_aegea.py")` do [`testkit.py`](../tests/testkit.py).
-- **Vários têm caminho absoluto de máquina hardcoded** (`C:\Users\<alguém>\...`), com o caminho de
-  outra pessoa comentado logo acima. É o estado real: eles nasceram como script de uma pessoa. As
-  seções abaixo marcam quais.
+- **Os caminhos partem da home de quem roda** (`Path.home()` / `expanduser("~")`). Alguns ainda
+  têm o caminho de outra pessoa comentado acima — é histórico, eles nasceram como script de uma
+  pessoa. As seções abaixo dizem onde cada um lê e grava.
 - **Para rodar, aponte o `PYTHONPATH` para `scripts/`** (ver o [README raiz](../../../README.md#como-rodar)).
   Os scripts colocam `jobs_backoffice/` no `sys.path`, não `scripts/`, e sem isso o `from utils...`
   não resolve.
@@ -50,8 +50,9 @@ muito mais tratamento de fonte de dados. Este ficou como referência histórica.
 `format='%d/%m/%Y'` estrito na data de apresentação e cruza só o monitoramento — por isso ele acusa
 "atrasada" onde o app já sabe que a fatura chegou por outro caminho. Não use este número em reunião.
 
-Caminhos hardcoded: `C:\Users\<usuário>\Faturas Oracle\` (planilha e SQLite). O app resolveu isso
-com `config.py` (env > settings.json > default).
+Caminhos: `~\Faturas Oracle\` (planilha e SQLite), sobrescrevíveis pelas mesmas env vars do app
+(`MONITOR_NFF_ARQUIVO_EXCEL`, `MONITOR_NFF_DB_PATH`). Não lê o `settings.json` do app — se você
+trocou o caminho pela UI do Monitor NFF, aqui precisa da env var.
 
 ---
 
@@ -95,8 +96,9 @@ alíquota e valor), medição, consumo, consumo compensado, devolução de gera�
 - **Fallback de gravação:** se o `.xlsx` de destino estiver aberto no Excel (`PermissionError`), grava
   com timestamp no nome em vez de perder o processamento.
 
-**Caminhos hardcoded** no `main()` (pasta dos PDFs e arquivo de saída), com os caminhos de outras
-pessoas comentados acima. Ajuste as duas linhas antes de rodar.
+**Caminhos no `main()`**: lê de `~\Documents\AEGEA\Faturas_Piauí_Abril\Todas as Faturas` e grava
+`~\Documents\AEGEA\Faturas_Piauí_Junho.xlsx`. O mês está no nome das duas — ajuste as duas linhas a
+cada lote.
 
 **Testes:** o `test_extracao_nff_aegea.py` (que cobria `_clean`, `extract` e `parse_bloco`) **não
 veio para este repo**. Hoje este script não tem teste aqui; se for recriar, use o `load_job` do

@@ -1,0 +1,31 @@
+# Dependências de todos os scripts do repo (scripts/).
+# Instalar a partir da raiz: pip install -r requirements.txt
+# O monitor_nff_app tem um requirements.txt próprio, mais enxuto, usado no build do .exe.
+
+# Dados e planilhas
+pandas
+numpy
+openpyxl
+xlwings                 # escrita no Excel interativo (planilhas ADFDI)
+
+# Configuração e utilitários
+PyYAML
+python-dotenv
+requests
+colorama
+pyfiglet                # banner do jobs_adhoc/0_monitoramento_total_nff.py
+
+# Snowflake
+snowflake-connector-python[pandas]==3.14.0   # mesma versão do monitor_nff_app
+cryptography            # autenticação por chave (diferimento_historico, utils_snowflake)
+boto3                   # credencial do Snowflake via AWS SSM (utils_snowflake)
+
+# PDF
+pdfplumber              # extrator_livia.py, utils_ingestion.py
+PyMuPDF                 # jobs_adhoc/7_extracao_nff_aegea.py (import fitz)
+
+# App desktop
+pywebview               # monitor_nff_app
+
+# Testes
+pytest

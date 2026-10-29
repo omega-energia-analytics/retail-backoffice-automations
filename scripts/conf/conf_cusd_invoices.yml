@@ -1,0 +1,163 @@
+model_parameters:
+  start_date: 01/01/2025
+
+  # Usinas que NUNCA podem gerar NFF. Lidas por remove_usinas_bloqueadas()
+  # (app/create_quick_invoices.py), que descarta as linhas ANTES de escrever na planilha.
+  #
+  # Bloqueio pelas DUAS chaves, e casa por acrônimo OU UC — de propósito:
+  # o acrônimo é o que o time usa para falar da usina, mas vem do usinas_atual.xlsx
+  # (SharePoint) e pode ser renomeado lá sem ninguém avisar o repo, o que silenciaria um
+  # bloqueio só por acrônimo. A UC é a chave estável. Ao incluir uma usina nova aqui,
+  # preencha as duas listas.
+  #
+  # Só afeta a geração de NFF. O monitoramento (MONITORAMENTO_CUSD_AWS, lambda
+  # monitoramento_cusd, monitor de NFF) continua enxergando essas usinas normalmente —
+  # elas devem aparecer no acompanhamento, só não devem virar nota.
+  nff_bloqueados:
+    acronimos:
+      - PI-JCO-01
+      - PI-SRN-01
+      - PI-SRN-04
+    unidades_consumidoras:
+      - "2000003809"   # PI-JCO-01 (JUNCO)
+      - "2000032975"   # PI-SRN-01 (SERENA 01)
+      # PI-SRN-04 (SERENA 04) não tem UC no usinas_atual.xlsx — não existe hoje no
+      # MONITORAMENTO_CUSD_AWS. O acrônimo já está bloqueado acima; quando a usina for
+      # cadastrada, acrescente a UC aqui.
+
+  output_files:
+    workbook_name: CreateQuickInvoices.xlsm
+    sheet_name: NFFs
+    parameters:
+      conta_contabil: "6204030004"
+      centro_de_custo: "730"
+      intercompany: "0000"
+      projeto: "000000"
+      classe_de_custo: "G03004"
+      subcontratados: "000000"
+      
+    schema:
+      unidade_de_negocio: 
+        oracle_sheet_column: F9
+        input_column: CLIENTE_APELIDO
+      numero_da_nff: 
+        oracle_sheet_column: H9
+        input_column: NOTA_FISCAL
+      moeda_da_nff: 
+        oracle_sheet_column: I9
+        input_column: MOEDA_DA_NFF
+      valor_da_nff: 
+        oracle_sheet_column: J9
+        input_column: TOTAL_DA_FATURA
+      data_da_nff: 
+        oracle_sheet_column: K9
+        input_column: DATA_DE_CRIACAO
+      fornecedor:
+        oracle_sheet_column: L9
+        input_column: DISTRIBUIDORA_SIGLA
+      numero_do_fornecedor: 
+        oracle_sheet_column: M9
+        input_column: NUMERO_DO_FORNECEDOR
+      local_do_fornecedor: 
+        oracle_sheet_column: N9
+        input_column: DISTRIBUIDORA_CNPJ
+      valor:
+        oracle_sheet_column: CC9
+        input_column: TOTAL_DA_FATURA
+      provisao:
+        oracle_sheet_column: CS9
+        input_column: COMBINACAO_DE_DISTRIBUICAO
+      condicoes_pagamento:
+        oracle_sheet_column: S9
+        input_column: CONDICOES_PAGAMENTO
+      data_de_vencimento:
+        oracle_sheet_column: T9
+        input_column: DATA_DE_VENCIMENTO
+      grupo_de_pagamentos:
+        oracle_sheet_column: AE9
+        input_column: GRUPO_DE_PAGAMENTOS
+
+  input_files:
+    shp:
+      drive_id: b!njzzOBmN2E-qGav4ADm6t7FbPjsoMwtPv5nwnDr7ikwHcuavd4_cQ6taAKNI-lNp
+      filepath: OMG/03 - Backoffice/13 - Geração Distribuída/Acompanhamento - Operação GD/2. Faturamento Usinas - Parceiros/
+    workbook_name: usinas_atual.xlsx
+
+  queries:
+    pagamentos: stg_pagamentos.sql
+    pagamentos_installment: stg_pagamentos_installment.sql
+    # Pagamentos recortados nas notas das usinas, numa leitura só da AP_ORACLE_VIEW.
+    # Exclusiva do monitor de NFF — as duas chaves acima continuam servindo a lambda
+    # monitoramento_cusd e o main_pagamento_usinas.py, que precisam da AP inteira,
+    # e seguem sendo o fallback do monitor. Ver o header do .sql.
+    pagamentos_usinas: stg_pagamentos_usinas.sql
+    fattureweb_usinas: stg_fattureweb_usinas.sql
+    fattureweb_faturamento: stg_fattureweb_faturamento.sql
+    cusd_monitoring: stg_cusd_monitoring.sql
+    # Notas de COELBA/CELPE/CEMIG que não sobem para o MONITORAMENTO_CUSD_AWS — ver
+    # header do .sql e create_quick_invoices.py::get_invoices.
+    cusd_invoices_suplemento: stg_cusd_invoices_suplemento.sql
+    crm: stg_crm.sql
+    crm_extraction: stg_crm_extraction.sql
+    crm_rpa: stg_crm_rpa.sql
+    crm_login_senha: stg_crm_login_senha.sql
+    # Âncora nota -> acrônimo. Passou a ler a USINAS_GERACAO (dbt) no lugar da
+    # MONITORAMENTO_CUSD_AWS (lambda): pagamento casado por nota fiscal contra o
+    # pipe novo do Oracle, em vez de completado por valor. Ver o header do .sql.
+    # A chave antiga segue aqui para voltar atrás sem mexer em código.
+    job_monitoramento: stg_query_monitor_usinas_geracao.sql
+    job_monitoramento_cusd_aws: stg_query_monitor_cusd_job.sql
+    hist_usina_livia: stg_hist_usina_livia.sql
+
+  rename_maps:
+    business_unit:
+      CONSORCIO GD 1: 6001-CONSORCIO SERENA GD 1
+      CONSORCIO GD 2: 6011-CONSORCIO SERENA GD 2
+      CONSORCIO GD 3: 6021-CONSORCIO SERENA GD 3
+      CONSORCIO GD 4: 6031-CONSORCIO SERENA GD 4
+      CONSORCIO GD 5: 6041-CONSORCIO SERENA GD 5
+      CONSORCIO GD 6: 6051-CONSORCIO SERENA GD 6
+      CONSORCIO SERENA GD 6: 6051-CONSORCIO SERENA GD 6
+      CONSORCIO GD 7: 6061-CONSORCIO SERENA GD 7
+      CONSORCIO GD 8: 6071-CONSORCIO SERENA GD 8
+      CONSORCIO GD 9: 6101-CONSORCIO SERENA GD 9
+      CONSORCIO GD 10: 6111-CONSORCIO SERENA GD 10
+      CONSORCIO GD 11: 6121-CONSORCIO SERENA GD 11
+      CONSORCIO GD 12: 6091-CONSORCIO SERENA GD 12
+      CONSORCIO GD 13: 6141-CONSORCIO SERENA GD 13
+
+    supplier_name:
+      CPFLPAULISTA: COMPANHIA PAULISTA DE FORCA E LUZ
+      CPFL Santa Cruz: COMPANHIA PAULISTA DE FORCA E LUZ
+      CPFL Piratininga: COMPANHIA PAULISTA DE FORCA E LUZ
+      CEPISA: EQUATORIAL PIAUI DISTRIBUIDORA DE ENERGIA S.A
+      COELBA: COMPANHIA DE ELETRICIDADE DO ESTADO DA BAHIA COELBA
+      CEMIG: CEMIG DISTRIBUICAO S.A
+      ENELCE: COMPANHIA ENERGETICA DO CEARA
+      CELGD: EQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A
+      ENELRJ: AMPLA ENERGIA E SERVICOS S.A.
+      CEMAR: EQUATORIAL MARANHAO DISTRIBUIDORA DE ENERGIA S.A.
+      CELPE: COMPANHIA ENERGETICA DE PERNAMBUCO
+      CELPA: EQUATORIAL PARA DISTRIBUIDORA DE ENERGIA S.A.
+      EMT: ENERGISA MATO GROSSO - DISTRIBUIDORA DE ENERGIA S.A.
+      SERENA: SERENA GERACAO S.A
+
+    supplier_number:
+      CPFLPAULISTA: "10933"
+      CPFL Santa Cruz: "10933"
+      CPFL Piratininga: "10933"
+      CEPISA: "068407480"
+      COELBA: "11405"
+      CEMIG: "069811800"
+      ENELCE: "16181"
+      CELGD: "15284"
+      ENELRJ: "330500710"
+      CEMAR: "062727930"
+      CELPE: "16184"
+      CELPA: "10932"
+      EMT: "10141"
+      SERENA: "091495030"
+
+
+
+

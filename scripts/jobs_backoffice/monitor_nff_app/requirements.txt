@@ -1,0 +1,10 @@
+# Dependências do Monitor NFF (app desktop pywebview).
+# Para gerar o .exe: pip install -r requirements.txt pyinstaller
+pywebview
+pandas
+openpyxl
+PyYAML
+python-dotenv
+requests
+snowflake-connector-python[pandas]==3.14.0
+colorama

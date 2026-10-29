@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Monitor NFF</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="logo">⚡ Monitor NFF</div>
+    <nav>
+      <button class="nav-btn active" data-view="dashboard">📊 Dashboard</button>
+      <button class="nav-btn" data-view="faturas">📋 Faturas Usinas</button>
+      <button class="nav-btn" data-view="parceiros">🤝 Faturas Parceiro</button>
+      <button class="nav-btn" data-view="historico">📜 Histórico</button>
+      <!-- <button class="nav-btn" data-view="nffs">🗂 NFFs</button> -->
+      <!-- <button class="nav-btn" data-view="excel">📥 Processar Excel</button> -->
+    </nav>
+    <div class="sidebar-footer">
+      <button id="btn-refresh" title="Recarregar dados">🔄 Atualizar</button>
+      <div id="last-update" class="last-update">—</div>
+      <label class="auto-refresh" title="Recarrega as faturas automaticamente (consulta o Snowflake)">
+        <input type="checkbox" id="chk-auto"> Auto-atualizar (15 min)
+      </label>
+    </div>
+  </aside>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <h1>Dashboard</h1>
+      <div class="filters">
+        <label class="mes-label" for="sel-mes-dash">Mês:</label>
+        <select id="sel-mes-dash" class="sel-mes" title="Mês pela data de apresentação da fatura"></select>
+      </div>
+      <div class="cards" id="cards-dashboard"></div>
+      <p class="muted">Clique num card para ver as faturas correspondentes na lista.</p>
+    </section>
+
+    <!-- FATURAS -->
+    <section id="view-faturas" class="view">
+      <h1>Faturas Usinas — todos os projetos</h1>
+      <div class="chips" id="faturas-chips"></div>
+      <div class="filters">
+        <label class="mes-label" for="sel-mes-faturas">Mês:</label>
+        <select id="sel-mes-faturas" class="sel-mes" title="Mês pela data de apresentação da fatura"></select>
+        <input type="text" id="filter-text" placeholder="Buscar projeto / acrônimo / distribuidora...">
+        <select id="filter-status">
+          <option value="">Todos status</option>
+          <option value="Chegou">Chegou</option>
+          <option value="Chegou atrasada">Chegou atrasada</option>
+          <option value="Pendente">Pendente</option>
+          <option value="Atrasada">Atrasada</option>
+        </select>
+        <select id="filter-pago">
+          <option value="">Pago / não pago</option>
+          <option value="pago">Pago</option>
+          <option value="nao-pago">A pagar</option>
+        </select>
+        <button id="btn-export-faturas" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
+      </div>
+      <div class="table-wrap"><table id="tbl-faturas"></table></div>
+    </section>
+
+    <!-- FATURAS PARCEIRO -->
+    <section id="view-parceiros" class="view">
+      <h1>Faturas Parceiro — rastreabilidade</h1>
+      <div class="chips" id="parceiros-chips"></div>
+      <div class="filters">
+        <label class="mes-label" for="sel-mes-parceiros">Mês Fechamento:</label>
+        <select id="sel-mes-parceiros" class="sel-mes-parc" title="Mês de fechamento da planilha de contratos"></select>
+        <input type="text" id="filter-parceiros" placeholder="Buscar parceiro / fornecedor / pagador / projeto...">
+        <button id="btn-export-parceiros" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
+      </div>
+      <p class="muted">Marque <strong>Chegou?</strong> conforme a nota chega — a marcação fica salva e reaparece na próxima vez que abrir.</p>
+      <div class="table-wrap"><table id="tbl-parceiros"></table></div>
+    </section>
+
+    <!-- HISTÓRICO -->
+    <section id="view-historico" class="view">
+      <h1>Histórico — o que mudou no painel</h1>
+      <div class="filters">
+        <input type="text" id="filter-historico" placeholder="Buscar acrônimo / projeto / NFF...">
+        <select id="filter-hist-mes" title="Mês do painel a que a fatura se refere">
+          <option value="">Todos os meses</option>
+        </select>
+        <select id="filter-hist-campo">
+          <option value="">Todos os campos</option>
+          <option value="Status">Status</option>
+          <option value="NFF">NFF (nota chegou)</option>
+          <option value="Pago">Pago</option>
+          <option value="Data Chegada">Data Chegada</option>
+          <option value="Total Fatura">Total Fatura</option>
+          <option value="Valor Oracle">Valor Oracle</option>
+          <option value="Fonte Pagamento">Fonte Pagamento</option>
+        </select>
+        <select id="filter-hist-limite" title="Quantas linhas trazer do log por consulta">
+          <option value="500">500 linhas</option>
+          <option value="2000">2.000 linhas</option>
+          <option value="10000">10.000 linhas</option>
+          <option value="0">Tudo (pode demorar)</option>
+        </select>
+        <label class="auto-refresh" title="A primeira carga registrou todas as faturas que já existiam — é retrato, não mudança">
+          <input type="checkbox" id="chk-carga-inicial"> Incluir carga inicial
+        </label>
+        <span id="hist-count" class="badge"></span>
+        <button id="btn-export-historico" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
+      </div>
+      <p class="muted">Só mudanças ficam registradas — abrir o app sem nada mudar não gera linha.
+        Busque por uma usina ou por uma NFF para ver a linha do tempo dela.</p>
+      <p class="muted" id="hist-origem">—</p>
+      <div class="table-wrap"><table id="tbl-historico"></table></div>
+    </section>
+
+    <!-- NFFs -->
+    <section id="view-nffs" class="view">
+      <h1>Banco de NFFs</h1>
+      <div class="filters">
+        <input type="text" id="search-nff" placeholder="Buscar NFF...">
+        <span id="nff-count" class="badge"></span>
+        <button id="btn-copiar-nffs" class="secondary" title="Copiar NFFs filtradas (uma por linha)">📋 Copiar lista</button>
+        <button id="btn-export-nffs" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
+      </div>
+      <div class="table-wrap"><table id="tbl-nffs"></table></div>
+    </section>
+
+    <!-- EXCEL -->
+    <section id="view-excel" class="view">
+      <h1>Processar Excel NFF</h1>
+      <p class="muted">Lê a planilha de NFFs e registra as novas no banco.</p>
+      <div class="config-row">
+        <span class="config-label">Arquivo:</span>
+        <code id="excel-path">—</code>
+        <button id="btn-escolher-arquivo" class="secondary">📁 Escolher arquivo</button>
+      </div>
+      <button id="btn-processar" class="primary">▶ Processar agora</button>
+      <pre id="excel-log" class="log"></pre>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <div id="loading" class="hidden"><div class="spinner"></div></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

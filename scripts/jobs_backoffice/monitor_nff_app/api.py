@@ -301,7 +301,9 @@ class Api:
             # Pago: só conta entre as que já chegaram
             ja_chegou = [x for x in f if x['Status'] in ('Chegou','Chegou atrasada')]
             pagas = sum(1 for x in ja_chegou if x.get('Pago'))
-            nao_pagas = len(ja_chegou) - pagas
+            # fatura de valor zero não tem o que pagar: sai do "A pagar" (ver montar_mes)
+            zeradas = sum(1 for x in ja_chegou if not x.get('Pago') and x.get('Fatura Zerada'))
+            nao_pagas = len(ja_chegou) - pagas - zeradas
             total_nffs = db.total_registros()
             return {"ok": True, "data": {
                 "total_projetos": total,
@@ -313,6 +315,7 @@ class Api:
                 "proximas_vencimento": proximas,
                 "pagas": pagas,
                 "nao_pagas": nao_pagas,
+                "zeradas": zeradas,
                 "total_nffs_db": total_nffs
             }}
         except Exception as e:

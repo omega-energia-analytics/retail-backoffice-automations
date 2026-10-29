@@ -51,7 +51,8 @@ const FATURA_CHIPS = [
   { key: 'atrasadas', label: 'Atrasadas',  pred: f => f.Status === 'Atrasada' },
   { key: 'vence3',    label: 'Vence ≤3d',  pred: f => f.Status === 'Pendente' && f['Dias Restantes'] != null && f['Dias Restantes'] <= 3 },
   { key: 'pagas',     label: 'Pagas',      pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !!f.Pago },
-  { key: 'pagar',     label: 'A pagar',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago }
+  { key: 'pagar',     label: 'A pagar',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] },
+  { key: 'zeradas',   label: 'Zeradas',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !!f['Fatura Zerada'] }
 ];
 
 // --- helpers ---
@@ -217,10 +218,11 @@ function faturaCols() {
     { key: 'UC', label: 'UC', render: v => copyCell(v) },
     { key: 'Status', label: 'Status', render: v => `<span class="status status-${(v||'').toLowerCase().replace(/\s+/g,'-')}">${v}</span>` },
     { key: 'Pago', label: 'Pago',
-      // valor bruto é sempre false p/ "A pagar" e "—" (só distingue quem chegou); o
-      // texto exibido é que separa os três estados, então o sort usa essa mesma régua.
+      // valor bruto é sempre false p/ "A pagar", "Zerada" e "—" (só distingue quem chegou);
+      // o texto exibido é que separa os quatro estados, então o sort usa essa mesma régua.
       sortValue: row => {
-        if (row.Pago) return 2;
+        if (row.Pago) return 3;
+        if (row['Fatura Zerada']) return 2;
         const chegou = row.Status === 'Chegou' || row.Status === 'Chegou atrasada';
         return chegou ? 1 : 0;
       },
@@ -235,6 +237,10 @@ function faturaCols() {
             ? 'Pago confirmado pela parcela do Oracle (sem registro em AP_PAYMENTS) — data aproximada'
             : 'Pago';
           return `<span class="status status-pago" title="${title}">✓ ${aprox ? '≈ ' : ''}${data}</span>`;
+        }
+        // Total Fatura = 0 no FattureWeb: não há o que pagar, não é pendência
+        if (row['Fatura Zerada']) {
+          return `<span class="status status-zerada" title="Fatura de valor zero — não há pagamento">Zerada</span>`;
         }
         // só mostra "a pagar" pra faturas que já chegaram; senão fica neutro
         const chegou = row.Status === 'Chegou' || row.Status === 'Chegou atrasada';
@@ -591,6 +597,7 @@ async function loadDashboard() {
     { label: 'Próx. vencimento (≤3d)', value: resumo.proximas_vencimento, cls: 'warn', chip: 'vence3' },
     { label: 'Pagas', value: resumo.pagas, cls: 'ok', chip: 'pagas' },
     { label: 'A pagar', value: resumo.nao_pagas, cls: 'warn', chip: 'pagar' },
+    { label: 'Zeradas', value: resumo.zeradas, cls: '', chip: 'zeradas' },
     // { label: 'NFFs no banco', value: resumo.total_nffs_db, cls: '' }
   ];
   const el = document.getElementById('cards-dashboard');
@@ -647,7 +654,8 @@ function applyFilters() {
     if (!chip.pred(f)) return false;
     if (status && f.Status !== status) return false;
     if (pago === 'pago' && !f.Pago) return false;
-    if (pago === 'nao-pago' && f.Pago) return false;
+    if (pago === 'nao-pago' && (f.Pago || f['Fatura Zerada'])) return false;
+    if (pago === 'zerada' && (f.Pago || !f['Fatura Zerada'])) return false;
     if (txt) {
       const blob = `${f.Projeto} ${f.ACRONIMO} ${f.Distribuidora} ${f.NFF ?? ''} ${f.UC ?? ''}`.toLowerCase();
       if (!blob.includes(txt)) return false;
@@ -723,7 +731,7 @@ function exportarFaturas() {
     'Status': f.Status,
     'NFF': f.NFF,
     'UC': f.UC,
-    'Pago': f.Pago ? 'Sim' : 'Não',
+    'Pago': f.Pago ? 'Sim' : (f['Fatura Zerada'] ? 'Zerada' : 'Não'),
     'Data Pagamento': f['Data Pagamento'],
     // rastro de qual fonte confirmou o pagamento — ORACLE_INSTALLMENT = data aproximada
     'Fonte Pagamento': f['Fonte Pagamento'],

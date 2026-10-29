@@ -1131,6 +1131,60 @@ def test_montar_mes_sem_valor_oracle_nao_quebra():
     assert jun['NFF'] == '111'
 
 
+def test_dinheiro_aceita_texto_br_e_float():
+    s = pd.Series(['32810,15', '1.234,56', '0,0', '7525.59', 19142.04, None, '', 'abc'])
+    out = monitor._dinheiro(s).tolist()
+    assert out[:5] == [32810.15, 1234.56, 0.0, 7525.59, 19142.04]
+    assert all(pd.isna(v) for v in out[5:])
+
+
+def test_montar_mes_divergencia_com_total_fattureweb_em_texto_br():
+    """Regressão: o FattureWeb manda o total como TEXTO BR ('19.142,04'). Com
+    pd.to_numeric direto ele virava NaN e a divergência nunca aparecia no painel —
+    os testes acima passavam porque montam o total como float."""
+    projetos = _df_projetos([('Usina A', 'A-01', 'CPFL', 10, 'FW')])
+    merged = _df_merged([
+        {'ACRONIMO': 'A-01', 'NOTA_FISCAL': '111', 'DATA_REFERENCIA': '2026-06-08',
+         'DATA_DE_PAGAMENTO': '2026-06-20', 'PAGAMENTO': None, 'UC': '1'},
+    ])
+    merged['TOTAL_DA_FATURA'] = ['19.142,04']
+    merged['FATURA_VALOR'] = [7525.59]
+
+    jun = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 6, hoje=HOJE_JUL))['A-01']
+    assert jun['Total Fatura'] == '19.142,04'   # valor exibido continua o da fonte
+    assert jun['Divergência Valor'] == 11616.45
+
+
+def test_montar_mes_fatura_zerada_nao_fica_a_pagar():
+    """Caso real (out/2026, duas usinas Equatorial GO): fatura de valor zero chegou e
+    aparecia "A pagar" pra sempre. Sai marcada como zerada; 'Pago' continua False
+    (não houve pagamento) e o Status de chegada não muda."""
+    projetos = _df_projetos([('Usina A', 'A-01', 'Equatorial GO', 10, 'E-MAIL')])
+    merged = _df_merged([
+        {'ACRONIMO': 'A-01', 'NOTA_FISCAL': '111', 'DATA_REFERENCIA': '2026-06-12',
+         'DATA_DE_PAGAMENTO': None, 'PAGAMENTO': None, 'UC': '1'},
+    ])
+    merged['TOTAL_DA_FATURA'] = ['0,0']
+
+    jun = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 6, hoje=HOJE_JUL))['A-01']
+    assert jun['Fatura Zerada'] is True
+    assert jun['Pago'] is False
+    assert jun['Status'] == 'Chegou atrasada'
+
+
+def test_montar_mes_total_ausente_nao_e_zerada():
+    # total desconhecido não é zero: sem TOTAL_DA_FATURA a fatura segue "A pagar"
+    projetos = _df_projetos([('Usina A', 'A-01', 'CPFL', 10, 'FW')])
+    merged = _df_merged([
+        {'ACRONIMO': 'A-01', 'NOTA_FISCAL': '111', 'DATA_REFERENCIA': '2026-06-08',
+         'DATA_DE_PAGAMENTO': None, 'PAGAMENTO': None, 'UC': '1'},
+    ])
+
+    jun = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 6, hoje=HOJE_JUL))['A-01']
+    assert jun['Fatura Zerada'] is False
+    assert jun['Pago'] is False
+
+
 def test_completar_recupera_valor_da_fatura_com_zero_a_esquerda():
     """Caso real do painel: NFF com ZERO À ESQUERDA vinha 'paga' com 'Valor Oracle' vazio.
 

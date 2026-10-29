@@ -280,6 +280,21 @@ def _fmt_uc(v):
     return s[:-2] if s.endswith('.0') else s
 
 
+def _dinheiro(series):
+    """Converte dinheiro para float, aceitando o texto em formato BR do FattureWeb.
+
+    `TOTAL_DA_FATURA` chega como TEXTO ('32810,15', '0,0'), e `pd.to_numeric` direto
+    devolve NaN pra qualquer valor com vírgula — então a 'Divergência Valor' nunca era
+    calculada fora dos testes (que usam float). Mesma regra do `db._num`: o ponto só é
+    decimal quando não há vírgula ('1.234,56' -> 1234.56). Float passa intacto e
+    ausente/ilegível vira NaN.
+    """
+    s = series.astype(str).str.strip()
+    br = s.str.contains(',', regex=False)
+    s = s.where(~br, s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False))
+    return pd.to_numeric(s, errors='coerce')
+
+
 # Ordem dos degraus das duas cascatas de data. Explícita e lado a lado porque a diferença
 # entre elas é PROPOSITAL — ver _cascata_datas.
 DEGRAUS_MES     = ['DATA_DA_APRESENTACAO_DA_FATURA', 'DATA_APRES_FW', 'MES_REF_FW',      'DATA_INVOICE']
@@ -975,17 +990,24 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # A divergência é o sinal: fatura lançada parcialmente, valor digitado errado, ou NFF
     # reutilizada. Só expõe o número das duas fontes; nenhuma coluna existente muda.
     df['Valor Oracle'] = pd.to_numeric(df['FATURA_VALOR'], errors='coerce')
-    total_fw = pd.to_numeric(df['Total Fatura'], errors='coerce')
+    # [fix] _dinheiro e não pd.to_numeric: o Total Fatura vem do FW como texto BR.
+    total_fw = _dinheiro(df['Total Fatura'])
     # Só compara quando AS DUAS pontas têm valor — sem lançamento no Oracle a diferença
     # seria o total inteiro e todo mês novo apareceria como divergente.
     df['Divergência Valor'] = (total_fw - df['Valor Oracle']).round(2)
+    # [add] Fatura de valor ZERO não tem o que pagar (caso real, out/2026: GO-MNU-01 e
+    # GO-RIQ-04, confirmado pelo Backoffice) e aparecia como "A pagar" pra sempre. Fica
+    # numa coluna própria em vez de mexer em 'Pago', que continua booleano — histórico,
+    # exportação e filtros seguem lendo o mesmo valor. É a UI que exibe "Zerada".
+    # Total AUSENTE não é zero: NaN.eq(0) é False, então fatura sem total segue "A pagar".
+    df['Fatura Zerada'] = total_fw.eq(0)
     # Colunas novas entram no FIM: consumidores existentes leem por nome, então a ordem antiga
     # segue intacta ('Fonte Pagamento' entrou pela mesma razão).
     cols = ['Projeto','ACRONIMO','Distribuidora','Dia','Forma Recebimento',
              'Data Esperada','Data Chegada','Status','Dias Restantes',
              'NFF','UC','Pago','Data Pagamento','Fonte Pagamento',
              'Competência','Faturas no Mês','NFF Adicionais','Fatura ID','Total Fatura',
-             'Valor Oracle','Divergência Valor']
+             'Valor Oracle','Divergência Valor','Fatura Zerada']
     df_out = df[cols]
 
     # sanitiza NaN/NaT -> None pra JSON válido

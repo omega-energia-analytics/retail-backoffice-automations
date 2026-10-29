@@ -108,6 +108,7 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
 .status.status-pago { background: rgba(16,185,129,0.15); color: var(--ok); }
 .status.status-nao-pago { background: rgba(245,158,11,0.15); color: var(--warn); }
 .status.status-neutro { background: transparent; color: var(--muted); padding-left: 0; }
+.status.status-zerada { background: rgba(168,168,168,0.15); color: var(--muted); }
 
 /* Valor do Oracle que não bate com o Total Fatura do FattureWeb (ver faturaCols) */
 .valor-divergente { color: var(--danger); font-weight: 600; }

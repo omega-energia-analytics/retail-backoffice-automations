@@ -9,7 +9,12 @@ from datetime import datetime
 # ----------------------------------------------------------
 # pasta_entrada = r
 # "C:\Users\vinicius.azevedo\Serena\Comercializadora - Acompanhamento - Operação GD\2. Faturamento Usinas - Parceiros\2. DEMONSTRATIVOS COELBA"
-pasta_entrada = r"C:\Users\vinicius.azevedo\Serena\Comercializadora - OMG\03 - BackOffice\13 - Geração Distribuída\Acompanhamento - Operação GD\2. Faturamento Usinas - Parceiros\2. DEMONSTRATIVOS COELBA"
+# Raiz "Acompanhamento - Operação GD": mesma env var BACKOFFICE_GD_DIR do monit_hist_usina.py
+base_gd = os.getenv("BACKOFFICE_GD_DIR") or os.path.join(
+    os.path.expanduser("~"), "Serena", "Comercializadora - OMG", "03 - BackOffice",
+    "13 - Geração Distribuída", "Acompanhamento - Operação GD",
+)
+pasta_entrada = os.path.join(base_gd, "2. Faturamento Usinas - Parceiros", "2. DEMONSTRATIVOS COELBA")
 
 # Lista todos os PDFs
 arquivos_pdf = [f for f in os.listdir(pasta_entrada) if f.lower().endswith(".pdf")]

@@ -12,6 +12,7 @@ from utils.utils_usinas import (
 )
 import xlwings as xw
 import datetime as dt
+from pathlib import Path
 
 # Colunas que identificam a usina na fonte (stg_cusd_monitoring.sql). Não vão para a
 # planilha — existem só para o bloqueio, e são removidas depois dele.
@@ -35,7 +36,7 @@ class CreateQuickInvoices():
     def __init__(self):
         self.conf = get_conf_by_project('cusd_invoices')
         model_parameters = self.conf["model_parameters"]
-        wb = xw.Book('C:\\Users\\vinicius.azevedo\\Faturas Oracle\\'+model_parameters["output_files"]["workbook_name"])
+        wb = xw.Book(str(Path.home() / "Faturas Oracle" / model_parameters["output_files"]["workbook_name"]))
         self.sheet = wb.sheets[model_parameters["output_files"]["sheet_name"]]
         self.connection = initialize_snowflake_connection()
 

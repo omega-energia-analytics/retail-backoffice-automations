@@ -34,7 +34,7 @@ from cryptography.hazmat.primitives import serialization
 
 # Caminho completo do Excel com as colunas ID_REGISTRO e NUMERO_NFE.
 # PLANILHA QUE PUXAMOS DO SNOWFLAKE VIA POWERQUERY E QUE A ANA PREENCHERÁ MANUALMENTE COM O NUMERO DA NFE.
-EXCEL_PATH = r"C:\Users\vinicius.azevedo\Documents\load_diferimento.xlsx"
+EXCEL_PATH = Path.home() / "Documents" / "load_diferimento.xlsx"
 
 # Ambiente Snowflake de destino: "dev", "stg" ou "prod".
 ENV = "dev"
@@ -42,7 +42,7 @@ ENV = "dev"
 # Caminho do .env com as credenciais de key-pair auth (SF_ACCOUNT, SF_USER,
 # SF_ROLE, SF_WAREHOUSE, PRIVATE_KEY_PATH, PRIVATE_KEY_PASSPHRASE). Cada
 # pessoa que rodar este script tem seu proprio usuario/chave neste arquivo.
-ENV_PATH = Path(r"C:\Users\vinicius.azevedo\Documents\CODE\serena-analytics\retail-backoffice\dbt-resources\.env")
+ENV_PATH = Path.home() / "Documents" / "CODE" / "serena-analytics" / "retail-backoffice" / "dbt-resources" / ".env"
 
 # ==========================================================================
 

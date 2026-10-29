@@ -19,8 +19,10 @@ from pyfiglet import figlet_format
 # ==============================
 
 ABA = "NFFs"
-ARQUIVO_EXCEL = r"C:\Users\vinicius.azevedo\Faturas Oracle\CreateQuickInvoices.xlsm"
-DB_PATH = r"C:\Users\vinicius.azevedo\Faturas Oracle\controle_nff.db"
+# Mesmas env vars do monitor_nff_app/config.py; sem elas, usa ~/Faturas Oracle
+BASE_FATURAS = os.path.join(os.path.expanduser("~"), "Faturas Oracle")
+ARQUIVO_EXCEL = os.getenv("MONITOR_NFF_ARQUIVO_EXCEL") or os.path.join(BASE_FATURAS, "CreateQuickInvoices.xlsm")
+DB_PATH = os.getenv("MONITOR_NFF_DB_PATH") or os.path.join(BASE_FATURAS, "controle_nff.db")
 HEADER_LINHA = 7
 
 # ==============================

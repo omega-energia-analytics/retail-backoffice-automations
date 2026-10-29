@@ -37,11 +37,15 @@ allocation_month = "2026-07"
 
 # ------------------------------------------------------------
 # Raiz da pasta "Acompanhamento - Operação GD" no OneDrive.
-# É a ÚNICA parte que muda entre máquinas — ajuste só aqui ao rodar em outra
-# máquina; folder_hist e a pasta de rateio são derivados dela.
+# É a ÚNICA parte que muda entre máquinas; folder_hist e a pasta de rateio são
+# derivados dela. O default parte do home de quem roda; se a sua sincronização
+# do OneDrive tiver outro nome (ex.: "Comercializadora - Comercializadora\OMG\..."),
+# defina a env var BACKOFFICE_GD_DIR com o caminho completo.
 # ------------------------------------------------------------
-# base_gd = r"C:\Users\livia.medeiros\Serena\Comercializadora - Comercializadora\OMG\03 - BackOffice\13 - Geração Distribuída\Acompanhamento - Operação GD"
-base_gd = r"C:\Users\vinicius.azevedo\Serena\Comercializadora - OMG\03 - BackOffice\13 - Geração Distribuída\Acompanhamento - Operação GD"
+base_gd = os.getenv("BACKOFFICE_GD_DIR") or os.path.join(
+    os.path.expanduser("~"), "Serena", "Comercializadora - OMG", "03 - BackOffice",
+    "13 - Geração Distribuída", "Acompanhamento - Operação GD",
+)
 
 folder_hist = os.path.join(base_gd, "inputs_manuais", "hist_rateio", "_processado")
 base_rateio = os.path.join(base_gd, "7. Rateio")

@@ -100,11 +100,15 @@ def _vazio(v):
 def _norm_un(v):
     """Normaliza um nome de Unidade de Negócio para casar no DE_PARA_UNIDADE:
     tira acento, sobe pra maiúsculo, colapsa espaços e remove pontuação/espaço
-    no fim (assim 'CONSÓRCIO...', 'SERENA GERAÇÃO S.A' e 'S.A.' caem na mesma chave)."""
+    no fim (assim 'CONSÓRCIO...', 'SERENA GERAÇÃO S.A' e 'S.A.' caem na mesma chave).
+    O sufixo 'SA' sem pontos vira 'S.A': a Controle_Emissão passou a trazer
+    'SERENA GERAÇÃO SA' (PAGADOR) e 'ARCO ENERGIA 1 SA' (FORNECEDOR) — mesmo CNPJ das
+    grafias com ponto — e sem isso caíam fora do de/para."""
     s = unicodedata.normalize("NFKD", str(v or ""))
     s = "".join(c for c in s if not unicodedata.combining(c))
     s = re.sub(r"\s+", " ", s.upper()).strip()
-    return s.rstrip(". ").strip()
+    s = s.rstrip(". ").strip()
+    return re.sub(r" SA$", " S.A", s)
 
 
 # De/para PAGADOR (Controle_Emissão) -> valor da LOV "*Unidade de Negócio" do Oracle.
@@ -292,6 +296,38 @@ def montar_registros(idx, debitos, hoje):
     return registros, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn
 
 
+def fatiar_lote(registros, capacidade, lote):
+    """Recorta o `lote` (1-based) de até `capacidade` NFFs e renumera o id_cabecalho
+    a partir de 1 dentro do lote. Devolve (fatia, total_de_lotes, offset_do_lote).
+
+    Existe porque o template ADFDI só desbloqueia uma faixa FINITA de linhas na aba
+    NFFs (100 no CreateQuickInvoices atual: linhas 9–108). Escrever além dela dá
+    com_error 0x800A03EC ('planilha protegida') no meio da gravação."""
+    if capacidade < 1:
+        raise ValueError("A aba NFFs não tem nenhuma linha desbloqueada a partir da "
+                         f"linha {LINHA_INICIAL} — template inválido?")
+    total = max(1, -(-len(registros) // capacidade))     # ceil; 0 registros = 1 lote vazio
+    if not 1 <= lote <= total:
+        raise ValueError(f"Lote {lote} não existe: são {len(registros)} NFF(s) em "
+                         f"{total} lote(s) de até {capacidade}.")
+    ini = (lote - 1) * capacidade
+    fatia = [dict(reg, id_cabecalho=k + 1)
+             for k, reg in enumerate(registros[ini:ini + capacidade])]
+    return fatia, total, ini
+
+
+def capacidade_linhas(sht, col):
+    """Quantas linhas consecutivas, a partir de LINHA_INICIAL, estão DESBLOQUEADAS na
+    coluna `col` — é o máximo de NFFs que cabe no template sem esbarrar na proteção.
+    Lido do próprio arquivo: se alguém baixar um template com mais linhas (ou inserir
+    linhas pelo menu do ADFDI), a capacidade acompanha sem mexer no código."""
+    teto = LINHA_INICIAL + 5000     # aba sem proteção nenhuma: não varrer 1M de linhas
+    r = LINHA_INICIAL
+    while r < teto and not sht.range((r, col)).api.Locked:
+        r += 1
+    return r - LINHA_INICIAL
+
+
 def mapear_colunas(headers):
     """headers: lista dos valores da linha 8 (1-based na planilha).
     Devolve {campo: indice_da_coluna}, usando a 1ª ocorrência de cada texto."""
@@ -374,7 +410,8 @@ def obter_book(arq_destino):
     )
 
 
-def gravar(registros, arq_destino):
+def gravar(registros, arq_destino, lote=1):
+    """Grava o `lote` de NFFs que cabe no template. Devolve (fatia, total_lotes, offset)."""
     wb = obter_book(arq_destino)
     app = wb.app
     orig_events = app.api.EnableEvents
@@ -396,13 +433,18 @@ def gravar(registros, arq_destino):
             headers = [headers]
         mapa = mapear_colunas(headers)
 
+        # 0. só cabe o que está desbloqueado (ver fatiar_lote). Valida ANTES de limpar
+        #    qualquer coisa: lote inválido não pode deixar a aba pela metade.
+        col_id = mapa["id_cabecalho"]
+        capacidade = capacidade_linhas(sht, col_id)
+        registros, total_lotes, offset = fatiar_lote(registros, capacidade, lote)
+
         # 1. limpa SÓ as linhas de dados ANTIGAS das colunas que vamos regravar (nunca o bloco
         #    C..última, p/ não encostar em "Alterado"/"Status da Linha"/"Chave"). Atenção: as
         #    células de dados do ADFDI só são desbloqueadas numa FAIXA finita de linhas — abaixo
         #    dela voltam a ser bloqueadas. O `used_range` estoura essa faixa, então limpar até ele
         #    dá "planilha protegida". Descobrimos quantas linhas antigas existem pela coluna-id
         #    (densa: 1..n; leitura é permitida mesmo em célula bloqueada) e limpamos só até lá.
-        col_id = mapa["id_cabecalho"]
         if ultima_linha >= LINHA_INICIAL:
             id_vals = sht.range((LINHA_INICIAL, col_id), (ultima_linha, col_id)).value
             if not isinstance(id_vals, list):
@@ -427,6 +469,7 @@ def gravar(registros, arq_destino):
     # Salva no lugar (preserva .xlsm/VBA) para você repassar o arquivo a quem tem acesso de
     # Upload no Oracle. Não fechamos: você revisa a aba NFFs antes de enviar.
     wb.save()
+    return registros, total_lotes, offset
 
 
 # ---------------------------------------------------------------------------
@@ -451,16 +494,22 @@ def erro(msg):
     _regra(Fore.RED)
 
 
-def relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn):
-    """Resumo final: o que foi preenchido, o que revisar e o próximo passo."""
+def relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn,
+              lote=1, total_lotes=1, offset=0, total_nffs=None):
+    """Resumo final: o que foi preenchido, o que revisar e o próximo passo.
+    `registros` é só o lote gravado; as pendências são do conjunto inteiro."""
     n = len(registros)
     fim = LINHA_INICIAL + n - 1
+    total_nffs = n if total_nffs is None else total_nffs
 
     _regra()
     print(f"{Fore.CYAN}{Style.BRIGHT}  NFFs de parceiros  →  {destino.name}")
     _regra()
     print(f"{Fore.GREEN}{Style.BRIGHT}  ✔  {n} NFF(s) preenchida(s) e salva(s)")
     _kv("Aba", f"{ABA_DESTINO}  ·  linhas {LINHA_INICIAL}–{fim}")
+    if total_lotes > 1:
+        _kv("Lote", f"{lote} de {total_lotes}  ·  Débitos {offset + 1}–{offset + n} "
+                    f"de {total_nffs} (o template só comporta este tanto por vez)")
     _kv("NFF", f'data {hoje:%d/%m/%Y}  ·  tipo "{TIPO_NFF}"  ·  cond. "{COND_PGTO}"')
 
     pendencias = []
@@ -476,7 +525,8 @@ def relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_m
                           f"(col M em branco): {', '.join(sorted(nao_mapeados_forn))}")
     if pendencias:
         print()
-        print(f"{Fore.YELLOW}{Style.BRIGHT}  ⚠  Revisar antes do Upload")
+        rotulo = f" (todos os {total_nffs} Débitos)" if total_lotes > 1 else ""
+        print(f"{Fore.YELLOW}{Style.BRIGHT}  ⚠  Revisar antes do Upload{rotulo}")
         for p in pendencias:
             print(f"{Fore.YELLOW}    •  {p}")
 
@@ -484,6 +534,9 @@ def relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_m
     print(f"{Fore.CYAN}  →  Revise a aba {ABA_DESTINO} antes de fazer o "
           f"Upload no Oracle.")
     print(f"    {Style.DIM}cols L/M 'Fornecedor'/'Número do Fornecedor' vêm do de/para (grafia e ID do Oracle); sem de/para o M fica em branco e o L sai como veio da origem")
+    if lote < total_lotes:
+        print(f"{Fore.CYAN}{Style.BRIGHT}  →  Depois do Upload, rode de novo com "
+              f"--lote {lote + 1} para os próximos Débitos.")
     _regra()
 
 
@@ -491,6 +544,14 @@ def relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_m
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Preenche a aba NFFs do CreateQuickInvoices "
+                                             "com os Débitos da contratos completos.")
+    ap.add_argument("--lote", type=int, default=1,
+                    help="qual lote gravar quando os Débitos não cabem no template "
+                         "de uma vez (1, 2, ...). Padrão: 1.")
+    lote = ap.parse_args().lote
+
     hoje = date.today()
     try:
         idx, debitos = ler_debitos()
@@ -501,12 +562,13 @@ def main():
         registros, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn = \
             montar_registros(idx, debitos, hoje)
         destino = achar_destino()
-        gravar(registros, destino)
+        gravados, total_lotes, offset = gravar(registros, destino, lote)
     except (OSError, RuntimeError, ValueError) as e:
         erro(str(e))
         return
 
-    relatorio(registros, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn)
+    relatorio(gravados, destino, hoje, sem_valor, sem_nota, nao_mapeados, nao_mapeados_forn,
+              lote=lote, total_lotes=total_lotes, offset=offset, total_nffs=len(registros))
 
 
 if __name__ == "__main__":

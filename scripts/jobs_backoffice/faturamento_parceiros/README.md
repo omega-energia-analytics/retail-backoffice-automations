@@ -83,8 +83,8 @@ Duas armadilhas que já quebraram o upload:
 - Os **códigos de unidade não são sequenciais** (GD 9 = 6101, GD 12 = 6091). Não deduza: eles vêm
   da aba `_ADFDI_LOV` do próprio `CreateQuickInvoices`, linha 2. Unidade nova no Oracle → copiar de
   lá.
-- As chaves são normalizadas por `_norm_un()` (sem acento, maiúsculo, sem pontuação final), então
-  `"CONSÓRCIO…"`, `"S.A"` e `"S.A."` caem na mesma chave. Você pode adicionar a entrada como ela
+- As chaves são normalizadas por `_norm_un()` (sem acento, maiúsculo, sem pontuação final, sufixo
+  `SA` → `S.A`), então `"CONSÓRCIO…"`, `"SA"`, `"S.A"` e `"S.A."` caem na mesma chave. Você pode adicionar a entrada como ela
   aparece na planilha.
 - **Sem de/para, os dois falham "para frente", não param o job:** a unidade mantém o nome limpo
   (comportamento antigo) e o número de fornecedor fica em branco (o Oracle casa pelo nome na coluna
@@ -119,6 +119,19 @@ com ▲ na aba `NFFs`, o arquivo é salvo **sem fechar**, e o terminal imprime o
 2. Faça o **Upload** pelo menu do ADFDI (quem tem acesso de upload no Oracle).
 
 O job pode ser rodado de novo: ele limpa as linhas de dados anteriores antes de escrever.
+
+**Mais Débitos do que o template comporta → lotes.** A aba `NFFs` do template só tem uma faixa
+finita de linhas desbloqueadas (100 no `CreateQuickInvoices` atual: linhas 9–108). Escrever além
+dela dava `com_error -2146827284` (`0x800A03EC`) no meio da gravação. O job lê essa capacidade do
+próprio arquivo e grava um lote por vez; o relatório diz quantos lotes são e qual rodar em seguida:
+
+```powershell
+python scripts\jobs_backoffice\faturamento_parceiros\gera_nff_parceiros.py            # lote 1
+# ... Upload no Oracle ...
+python scripts\jobs_backoffice\faturamento_parceiros\gera_nff_parceiros.py --lote 2   # lote 2
+```
+
+O `Identificador do Cabeçalho` recomeça em 1 em cada lote.
 
 ## Pontos de atenção
 

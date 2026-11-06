@@ -18,6 +18,7 @@ sob `if __name__ == "__main__"` / depende de Excel aberto.
 """
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from testkit import load_job
@@ -98,6 +99,14 @@ def test_norm_un_colapsa_espacos():
 def test_norm_un_ignora_ponto_final_e_espaco():
     # com e sem ponto final caem na MESMA chave (S.A / S.A.)
     assert job._norm_un("Serena Geração S.A") == job._norm_un("Serena Geração S.A.")
+
+
+def test_norm_un_sufixo_sa_sem_ponto_vira_s_a():
+    # 'SA' sem ponto (grafia nova da Controle_Emissão) cai na mesma chave de 'S.A.'
+    assert job._norm_un("SERENA GERAÇÃO SA") == job._norm_un("SERENA GERAÇÃO S.A.")
+    assert job._norm_un("ARCO ENERGIA 1 SA") == job._norm_un("ARCO ENERGIA 1 S.A.")
+    # só no FIM do nome: 'SA' no meio de palavra/nome não é mexido
+    assert job._norm_un("SANTA SA LTDA") == "SANTA SA LTDA"
 
 
 def test_norm_un_none_vira_string_vazia():
@@ -231,10 +240,10 @@ def test_montar_registros_de_para_completo():
         "numero_fornecedor": "91495030",   # ID Oracle via de/para (col M)
         "local_fornecedor": "30997588001051",
         "moeda_pgto": "BRL",
-        "tipo_nff": "Padrão",            # NÃO "Standard"
+        "tipo_nff": "Standard",          # aba De_Para da contratos completos
         "descricao": "Serviço Y",
         "cond_pgto": "Imediato",
-        "data_cond": hoje,               # hoje entra em data_nff E data_cond
+        "data_cond": pd.Timestamp(2026, 7, 31),  # último dia do mês (regra da Neiva)
         "grupo_pgto": "Método Direto",
         "tipo_linha": "Item",
         "valor_linha": 1000.0,
@@ -304,3 +313,49 @@ def test_montar_registros_pagador_desconhecido_vai_para_nao_mapeados():
     registros, _, _, nao_map, _ = job.montar_registros(IDX, rows, date(2026, 7, 3))
     assert registros[0]["unidade_negocio"] == "Consórcio Fantasma"
     assert nao_map == {"Consórcio Fantasma"}
+
+
+# ---------------------------------------------------------------------------
+# fatiar_lote  (o template ADFDI só desbloqueia N linhas — hoje 100)
+# ---------------------------------------------------------------------------
+def _regs(n):
+    return [{"id_cabecalho": i + 1, "numero_nff": f"NF-{i + 1}"} for i in range(n)]
+
+
+def test_fatiar_lote_cabe_tudo_num_lote_so():
+    fatia, total, offset = job.fatiar_lote(_regs(40), 100, 1)
+    assert (len(fatia), total, offset) == (40, 1, 0)
+
+
+def test_fatiar_lote_101_nffs_em_template_de_100_viram_2_lotes():
+    regs = _regs(101)
+    lote1, total, off1 = job.fatiar_lote(regs, 100, 1)
+    lote2, _, off2 = job.fatiar_lote(regs, 100, 2)
+    assert total == 2
+    assert (len(lote1), off1) == (100, 0)
+    assert (len(lote2), off2) == (1, 100)
+    assert lote2[0]["numero_nff"] == "NF-101"
+
+
+def test_fatiar_lote_renumera_id_cabecalho_dentro_do_lote():
+    lote2, _, _ = job.fatiar_lote(_regs(250), 100, 2)
+    assert [r["id_cabecalho"] for r in lote2] == list(range(1, 101))
+    assert lote2[0]["numero_nff"] == "NF-101"
+
+
+def test_fatiar_lote_nao_altera_os_registros_originais():
+    regs = _regs(150)
+    job.fatiar_lote(regs, 100, 2)
+    assert regs[100]["id_cabecalho"] == 101
+
+
+def test_fatiar_lote_inexistente_da_erro_claro():
+    with pytest.raises(ValueError, match="Lote 3 não existe"):
+        job.fatiar_lote(_regs(150), 100, 3)
+    with pytest.raises(ValueError):
+        job.fatiar_lote(_regs(150), 100, 0)
+
+
+def test_fatiar_lote_template_sem_linha_livre_da_erro():
+    with pytest.raises(ValueError, match="nenhuma linha desbloqueada"):
+        job.fatiar_lote(_regs(5), 0, 1)

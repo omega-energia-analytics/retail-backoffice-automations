@@ -217,6 +217,30 @@ Quem traduz é a UI: com `Pago` falso e `Fatura Zerada` verdadeiro, a célula mo
 a fatura sai do card/chip "A pagar" e entra em "Zeradas", e a exportação escreve `Zerada` na coluna
 Pago. Total **ausente** não é zero: sem `Total Fatura`, a fatura segue "A pagar".
 
+### Refaturamento: a versão válida é a exibida
+
+A distribuidora às vezes reemite a fatura do mês (mesma competência, outra NFF), e só a última
+versão vira NFF ativa e é paga. Caso real, Equatorial GO, competência 09/2026: emissões de 07/09
+reemitidas em 09/09. O painel escolhia a linha exibida só por fonte e data — preferindo a linha do
+monitoramento — e exibia a versão morta como "a pagar", com a paga escondida em `NFF Adicionais`
+(GO-NVP-01 mostrava a NFF **cancelada** no Oracle; GO-RIQ-02, uma versão que nunca foi lançada).
+
+- `fatura_valida()`: tem NFF ativa no Oracle (lançada e não Cancelada) ou já foi paga.
+- `marcar_substituidas()`: fatura não válida cuja usina tem outra **válida da mesma competência**
+  (`MES_REF_FW`). Só mesma competência: faturas de competências diferentes no mesmo mês
+  (BA-BAR-01, mai/2026) não são substituição. Sem competência, nada é marcado.
+- `montar_mes` troca a linha escolhida pela versão válida **só** quando a escolhida é substituída;
+  qualquer outra escolha sai idêntica. A substituída segue contada em `Faturas no Mês` e listada em
+  `NFF Adicionais`.
+- `STATUS_NFF` (vem da `stg_pagamentos_usinas.sql`) alimenta a coluna nova `NFF Cancelada`: NFF
+  cancelada sem versão válida aparece como **Cancelada** (mesmo tratamento da Zerada) e sai do
+  "A pagar".
+
+No mesmo dia: a `stg_pagamentos_usinas.sql` ganhou a perna `MAPA_USINAS` que a
+`stg_fattureweb_usinas.sql` já tinha. Sem ela, usina com apelido nulo no FattureWeb (Rio Quente)
+entrava no painel mas nunca tinha o pagamento buscado — a regra "mude aqui também" do header não
+tinha sido seguida em 15/10/2026.
+
 ### A aba KPIs do monitor de observability lê esta base
 
 `observability/monitor_observability_app` (aba KPIs) não tem query própria: chama

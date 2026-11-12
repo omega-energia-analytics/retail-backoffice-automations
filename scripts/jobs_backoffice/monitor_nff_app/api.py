@@ -303,7 +303,10 @@ class Api:
             pagas = sum(1 for x in ja_chegou if x.get('Pago'))
             # fatura de valor zero não tem o que pagar: sai do "A pagar" (ver montar_mes)
             zeradas = sum(1 for x in ja_chegou if not x.get('Pago') and x.get('Fatura Zerada'))
-            nao_pagas = len(ja_chegou) - pagas - zeradas
+            # NFF cancelada no Oracle (sem versão válida da competência) também não é "a pagar"
+            canceladas = sum(1 for x in ja_chegou if not x.get('Pago') and not x.get('Fatura Zerada')
+                             and x.get('NFF Cancelada'))
+            nao_pagas = len(ja_chegou) - pagas - zeradas - canceladas
             total_nffs = db.total_registros()
             return {"ok": True, "data": {
                 "total_projetos": total,
@@ -316,6 +319,7 @@ class Api:
                 "pagas": pagas,
                 "nao_pagas": nao_pagas,
                 "zeradas": zeradas,
+                "canceladas": canceladas,
                 "total_nffs_db": total_nffs
             }}
         except Exception as e:

@@ -51,8 +51,9 @@ const FATURA_CHIPS = [
   { key: 'atrasadas', label: 'Atrasadas',  pred: f => f.Status === 'Atrasada' },
   { key: 'vence3',    label: 'Vence ≤3d',  pred: f => f.Status === 'Pendente' && f['Dias Restantes'] != null && f['Dias Restantes'] <= 3 },
   { key: 'pagas',     label: 'Pagas',      pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !!f.Pago },
-  { key: 'pagar',     label: 'A pagar',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] },
-  { key: 'zeradas',   label: 'Zeradas',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !!f['Fatura Zerada'] }
+  { key: 'pagar',     label: 'A pagar',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] && !f['NFF Cancelada'] },
+  { key: 'zeradas',   label: 'Zeradas',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !!f['Fatura Zerada'] },
+  { key: 'canceladas',label: 'NFF cancelada', pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] && !!f['NFF Cancelada'] }
 ];
 
 // --- helpers ---
@@ -222,7 +223,7 @@ function faturaCols() {
       // o texto exibido é que separa os quatro estados, então o sort usa essa mesma régua.
       sortValue: row => {
         if (row.Pago) return 3;
-        if (row['Fatura Zerada']) return 2;
+        if (row['Fatura Zerada'] || row['NFF Cancelada']) return 2;
         const chegou = row.Status === 'Chegou' || row.Status === 'Chegou atrasada';
         return chegou ? 1 : 0;
       },
@@ -241,6 +242,11 @@ function faturaCols() {
         // Total Fatura = 0 no FattureWeb: não há o que pagar, não é pendência
         if (row['Fatura Zerada']) {
           return `<span class="status status-zerada" title="Fatura de valor zero — não há pagamento">Zerada</span>`;
+        }
+        // NFF cancelada no Oracle e sem versão válida da mesma competência (com versão válida,
+        // o monitor já exibe a válida — ver marcar_substituidas em monitor.py)
+        if (row['NFF Cancelada']) {
+          return `<span class="status status-zerada" title="NFF cancelada no Oracle — não há pagamento a fazer por esta nota">Cancelada</span>`;
         }
         // só mostra "a pagar" pra faturas que já chegaram; senão fica neutro
         const chegou = row.Status === 'Chegou' || row.Status === 'Chegou atrasada';
@@ -654,7 +660,7 @@ function applyFilters() {
     if (!chip.pred(f)) return false;
     if (status && f.Status !== status) return false;
     if (pago === 'pago' && !f.Pago) return false;
-    if (pago === 'nao-pago' && (f.Pago || f['Fatura Zerada'])) return false;
+    if (pago === 'nao-pago' && (f.Pago || f['Fatura Zerada'] || f['NFF Cancelada'])) return false;
     if (pago === 'zerada' && (f.Pago || !f['Fatura Zerada'])) return false;
     if (txt) {
       const blob = `${f.Projeto} ${f.ACRONIMO} ${f.Distribuidora} ${f.NFF ?? ''} ${f.UC ?? ''}`.toLowerCase();
@@ -731,7 +737,7 @@ function exportarFaturas() {
     'Status': f.Status,
     'NFF': f.NFF,
     'UC': f.UC,
-    'Pago': f.Pago ? 'Sim' : (f['Fatura Zerada'] ? 'Zerada' : 'Não'),
+    'Pago': f.Pago ? 'Sim' : (f['Fatura Zerada'] ? 'Zerada' : (f['NFF Cancelada'] ? 'Cancelada' : 'Não')),
     'Data Pagamento': f['Data Pagamento'],
     // rastro de qual fonte confirmou o pagamento — ORACLE_INSTALLMENT = data aproximada
     'Fonte Pagamento': f['Fonte Pagamento'],

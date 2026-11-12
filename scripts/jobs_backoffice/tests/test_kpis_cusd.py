@@ -29,17 +29,20 @@ def linha(**over):
         "FATURA_VALOR": None, "TOTAL_DA_FATURA": None, "DATA_NFF": None, "VENCIMENTO_FW": None,
         "DATA_CHEGADA": "2026-10-01", "DATA_DE_PAGAMENTO": None, "PAGAMENTO": None,
         "STATUS_INSTALLMENT": None, "DATA_STATUS_INSTALLMENT": None,
+        "MES_REF_FW": None, "STATUS_NFF": None,
     }
     base.update(over)
     return base
 
 
 def base_monitor(linhas):
+    """O que o kpi_api entrega: base do monitor + pagamento_efetivo + marcar_substituidas."""
     df = pd.DataFrame(linhas or [linha(NOTA_FISCAL="x")]).iloc[: len(linhas)]
     for c in ("DATA_NFF", "VENCIMENTO_FW", "DATA_CHEGADA", "DATA_DE_PAGAMENTO", "PAGAMENTO",
-              "DATA_STATUS_INSTALLMENT"):
+              "DATA_STATUS_INSTALLMENT", "MES_REF_FW"):
         df[c] = pd.to_datetime(df[c])
-    return monitor.pagamento_efetivo(df)
+    monitor.pagamento_efetivo(df)
+    return monitor.marcar_substituidas(df)
 
 
 def log(nffs, quando="2026-11-12T10:12:20-03:00", usuario="fulano"):
@@ -233,6 +236,46 @@ def test_kpi2_sem_vencimento_fica_listada_pela_chegada_e_fora_da_conta():
     m = p["kpi2"]["por_mes"]["2026-10"]
     assert (m["kpi"], m["n_total"], m["n_sem_vencimento"]) == (0, 0, 1)
     assert _status(p) == {"1": "sem_vencimento"}
+
+
+def test_kpi2_refaturamento_versao_cancelada_fica_fora_e_a_valida_conta():
+    """GO-NVP-01, 09/2026: 206974381 cancelada no Oracle, 207222589 reemitida e paga em dia."""
+    p = payload([
+        linha(NOTA_FISCAL="206974381", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-16",
+              FATURA_VALOR=0.0, STATUS_NFF="Cancelada", TOTAL_DA_FATURA="45839,86"),
+        linha(NOTA_FISCAL="207222589", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-16",
+              FATURA_VALOR=42726.60, STATUS_NFF="Validada", DATA_DE_PAGAMENTO="2026-09-15"),
+    ])
+    m = p["kpi2"]["por_mes"]["2026-09"]
+    assert (m["kpi"], m["n_no_prazo"], m["n_substituida"], m["n_total"]) == (0, 1, 1, 1)
+    assert _status(p) == {"206974381": "substituida"}
+
+
+def test_kpi2_refaturamento_nunca_lancadas_ficam_fora():
+    """GO-RIQ-02, 09/2026: duas versões nunca lançadas + a válida, paga com atraso."""
+    p = payload([
+        linha(NOTA_FISCAL="206974485", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-16"),
+        linha(NOTA_FISCAL="207222540", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-16"),
+        linha(NOTA_FISCAL="207533537", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-17",
+              FATURA_VALOR=43253.37, STATUS_NFF="Validada", DATA_NFF="2026-10-01",
+              DATA_DE_PAGAMENTO="2026-10-09"),
+    ])
+    m = p["kpi2"]["por_mes"]["2026-09"]
+    assert (m["kpi"], m["n_atrasada"], m["n_vencida"], m["n_substituida"]) == (1, 1, 0, 2)
+
+
+def test_kpi2_cancelada_sem_versao_valida_fica_fora_da_conta():
+    p = payload([linha(NOTA_FISCAL="1", MES_REF_FW="2026-09-01", VENCIMENTO_FW="2026-09-16",
+                       FATURA_VALOR=0.0, STATUS_NFF="Cancelada", TOTAL_DA_FATURA="100,00")])
+    m = p["kpi2"]["por_mes"]["2026-09"]
+    assert (m["kpi"], m["n_cancelada"]) == (0, 1)
+    assert _status(p) == {"1": "cancelada"}
+
+
+def test_kpi1_nff_cancelada_nao_entra():
+    p = payload([linha(NOTA_FISCAL="1", DATA_NFF="2026-11-12", FATURA_VALOR=0.0, STATUS_NFF="Cancelada")],
+                logs=[log([("9", 1.0)])])
+    assert p["kpi1"]["por_mes"]["2026-11"]["n_manual"] == 0
 
 
 def test_kpi2_zerada_e_anterior_a_serie_ficam_de_fora():

@@ -1268,3 +1268,114 @@ def test_pagamento_efetivo_parcela_paga_sem_data_continua_paga():
 def test_pagamento_efetivo_sem_evidencia_nao_esta_pago():
     r = _pag()
     assert not r['Pago'] and r['Fonte Pagamento'] is None
+
+
+# ---------------------------------------------------------------------------
+# Refaturamento: fatura_valida / marcar_substituidas / escolha da linha exibida
+# (caso real Equatorial GO, competência 09/2026 — GO-NVP-01 e GO-RIQ-02)
+# ---------------------------------------------------------------------------
+
+HOJE_NOV = datetime(2026, 11, 12)
+
+
+def _df_refat(linhas):
+    cols = ['ACRONIMO', 'NOTA_FISCAL', 'FONTE', 'DATA_REFERENCIA', 'DATA_CHEGADA', 'MES_REF_FW',
+            'DATA_DE_PAGAMENTO', 'PAGAMENTO', 'STATUS_INSTALLMENT', 'DATA_STATUS_INSTALLMENT',
+            'FATURA_VALOR', 'STATUS_NFF', 'TOTAL_DA_FATURA', 'UC']
+    df = pd.DataFrame([{c: l.get(c) for c in cols} for l in linhas], columns=cols)
+    for c in ('DATA_REFERENCIA', 'DATA_CHEGADA', 'MES_REF_FW', 'DATA_DE_PAGAMENTO', 'PAGAMENTO',
+              'DATA_STATUS_INSTALLMENT'):
+        df[c] = pd.to_datetime(df[c], errors='coerce')
+    return df
+
+
+def _gonvp():
+    """GO-NVP-01, 09/2026: 1ª emissão cancelada no Oracle (valor 0), reemissão paga em dia."""
+    return _df_refat([
+        {'ACRONIMO': 'GO-NVP-01', 'NOTA_FISCAL': '206974381', 'FONTE': 'MONITORAMENTO',
+         'DATA_REFERENCIA': '2026-09-07', 'DATA_CHEGADA': '2026-09-09', 'MES_REF_FW': '2026-09-01',
+         'FATURA_VALOR': 0.0, 'STATUS_NFF': 'Cancelada', 'TOTAL_DA_FATURA': '45839,86'},
+        {'ACRONIMO': 'GO-NVP-01', 'NOTA_FISCAL': '207222589', 'FONTE': 'FW_SUPLEMENTO',
+         'DATA_REFERENCIA': '2026-09-09', 'DATA_CHEGADA': '2026-09-09', 'MES_REF_FW': '2026-09-01',
+         'FATURA_VALOR': 42726.60, 'STATUS_NFF': 'Validada', 'DATA_DE_PAGAMENTO': '2026-09-15',
+         'TOTAL_DA_FATURA': '42726,6'},
+    ])
+
+
+def test_fatura_valida():
+    df = _df_refat([
+        {'NOTA_FISCAL': '1', 'FATURA_VALOR': 10.0, 'STATUS_NFF': 'Validada'},   # NFF ativa
+        {'NOTA_FISCAL': '2', 'FATURA_VALOR': 0.0, 'STATUS_NFF': 'Cancelada'},   # cancelada
+        {'NOTA_FISCAL': '3'},                                                   # sem NFF
+        {'NOTA_FISCAL': '4', 'PAGAMENTO': '2026-09-10'},                        # paga (monitoramento)
+        {'NOTA_FISCAL': '5', 'STATUS_INSTALLMENT': 'Totalmente paga'},          # paga (parcela)
+    ])
+    assert monitor.fatura_valida(df).tolist() == [True, False, False, True, True]
+
+
+def test_marcar_substituidas_so_na_mesma_competencia():
+    df = _df_refat([
+        {'ACRONIMO': 'A', 'NOTA_FISCAL': '1', 'MES_REF_FW': '2026-09-01'},                       # sem NFF
+        {'ACRONIMO': 'A', 'NOTA_FISCAL': '2', 'MES_REF_FW': '2026-09-01', 'FATURA_VALOR': 5.0},  # válida
+        {'ACRONIMO': 'A', 'NOTA_FISCAL': '3', 'MES_REF_FW': '2026-08-01'},                       # outra competência
+        {'ACRONIMO': 'B', 'NOTA_FISCAL': '4', 'MES_REF_FW': '2026-09-01'},                       # outra usina
+        {'ACRONIMO': 'A', 'NOTA_FISCAL': '5'},                                                   # sem competência
+    ])
+    monitor.marcar_substituidas(df)
+    assert df['Substituída'].tolist() == [True, False, False, False, False]
+
+
+def test_montar_mes_refaturamento_exibe_a_versao_valida_e_nao_a_cancelada():
+    projetos = _df_projetos([('UFV Novo Planalto I', 'GO-NVP-01', 'Equatorial GO', 5, 'E-MAIL')])
+    r = _por_acronimo(monitor.montar_mes(_gonvp(), projetos, 2026, 9, hoje=HOJE_NOV))['GO-NVP-01']
+    assert r['NFF'] == '207222589'
+    assert r['Pago'] and r['Data Pagamento'] == '15/09/2026'
+    assert not r['NFF Cancelada']
+    assert r['Faturas no Mês'] == 2 and r['NFF Adicionais'] == '206974381'
+
+
+def test_montar_mes_refaturamento_sem_versao_valida_mostra_cancelada():
+    projetos = _df_projetos([('UFV Novo Planalto I', 'GO-NVP-01', 'Equatorial GO', 5, 'E-MAIL')])
+    so_cancelada = _gonvp().iloc[[0]]
+    r = _por_acronimo(monitor.montar_mes(so_cancelada, projetos, 2026, 9, hoje=HOJE_NOV))['GO-NVP-01']
+    assert r['NFF'] == '206974381'
+    assert not r['Pago'] and r['NFF Cancelada']
+
+
+def test_montar_mes_refaturamento_nunca_lancadas_cedem_para_a_lancada():
+    """GO-RIQ-02, 09/2026: três emissões; só a última (suplemento) foi lançada e paga."""
+    projetos = _df_projetos([('UFV Rio Quente II', 'GO-RIQ-02', 'Equatorial GO', 5, 'E-MAIL')])
+    base = _df_refat([
+        {'ACRONIMO': 'GO-RIQ-02', 'NOTA_FISCAL': '206974485', 'FONTE': 'FW_SUPLEMENTO',
+         'DATA_REFERENCIA': '2026-09-07', 'DATA_CHEGADA': '2026-09-09', 'MES_REF_FW': '2026-09-01'},
+        {'ACRONIMO': 'GO-RIQ-02', 'NOTA_FISCAL': '207222540', 'FONTE': 'MONITORAMENTO',
+         'DATA_REFERENCIA': '2026-09-09', 'DATA_CHEGADA': '2026-09-09', 'MES_REF_FW': '2026-09-01'},
+        {'ACRONIMO': 'GO-RIQ-02', 'NOTA_FISCAL': '207533537', 'FONTE': 'FW_SUPLEMENTO',
+         'DATA_REFERENCIA': '2026-09-10', 'DATA_CHEGADA': '2026-09-10', 'MES_REF_FW': '2026-09-01',
+         'FATURA_VALOR': 43253.37, 'STATUS_NFF': 'Validada', 'DATA_DE_PAGAMENTO': '2026-10-09'},
+    ])
+    r = _por_acronimo(monitor.montar_mes(base, projetos, 2026, 9, hoje=HOJE_NOV))['GO-RIQ-02']
+    assert r['NFF'] == '207533537' and r['Pago'] and r['Data Pagamento'] == '09/10/2026'
+    assert r['Faturas no Mês'] == 3
+
+
+def test_montar_mes_competencias_diferentes_nao_trocam_a_linha():
+    """BA-BAR-01, mai/2026: faturas de competências diferentes no mesmo mês. A da vez segue
+    sendo a de competência mais recente, mesmo sem NFF, como antes."""
+    projetos = _df_projetos([('UFV Barreiras', 'BA-BAR-01', 'COELBA', 20, 'E-MAIL')])
+    base = _df_refat([
+        {'ACRONIMO': 'BA-BAR-01', 'NOTA_FISCAL': '1', 'FONTE': 'MONITORAMENTO', 'MES_REF_FW': '2026-02-01',
+         'DATA_REFERENCIA': '2026-02-01', 'DATA_CHEGADA': '2026-05-05', 'FATURA_VALOR': 9.0,
+         'DATA_DE_PAGAMENTO': '2026-05-10'},
+        {'ACRONIMO': 'BA-BAR-01', 'NOTA_FISCAL': '3', 'FONTE': 'MONITORAMENTO', 'MES_REF_FW': '2026-04-01',
+         'DATA_REFERENCIA': '2026-04-01', 'DATA_CHEGADA': '2026-05-26'},
+    ])
+    r = _por_acronimo(monitor.montar_mes(base, projetos, 2026, 5, hoje=HOJE_NOV))['BA-BAR-01']
+    assert r['NFF'] == '3' and not r['Pago']
+
+
+def test_prep_pag_sem_status_no_fallback_nao_quebra():
+    df = pd.DataFrame({'NOTA_FISCAL': ['1'], 'FATURA_VALOR': [1.0],
+                       'DATA_DE_PAGAMENTO': [None], 'DATA_INVOICE': [None]})
+    out = monitor._prep_pag(df)
+    assert 'STATUS_NFF' in out.columns and out['STATUS_NFF'].isna().all()

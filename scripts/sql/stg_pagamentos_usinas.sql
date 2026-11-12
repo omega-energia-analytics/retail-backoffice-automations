@@ -56,9 +56,19 @@ WITH NOTAS_USINAS AS (
 
     UNION
 
+    -- [fix 12/11/2026] + perna MAPA_USINAS, igual ao stg_fattureweb_usinas.sql (que a ganhou
+    -- em 15/10/2026 sem que esta query acompanhasse). Usina nova chega no FattureWeb com
+    -- CLIENTE_APELIDO nulo (caso das Rio Quente): entrava no monitor pela UC, mas ficava fora
+    -- deste universo, e o pagamento dela nunca era buscado. Caso real: GO-RIQ-02, NFF
+    -- 207533537, paga em 09/10/2026 no Oracle e exibida como não paga.
     SELECT NOTA_FISCAL
     FROM RETAIL_DEV.BACKOFFICE.FATTUREWEB_USINAS
-    WHERE CLIENTE_APELIDO IN (
+    WHERE TRIM(NUMERO_DA_INSTALACAO) IN (
+        SELECT DISTINCT TRIM(INSTALACAO)
+        FROM RETAIL_PROD.BACKOFFICE.MAPA_USINAS
+        WHERE INSTALACAO IS NOT NULL
+    )
+    OR CLIENTE_APELIDO IN (
         'CONSORCIO GD 1',
         'CONSORCIO GD 2',
         'CONSORCIO GD 3',
@@ -117,6 +127,11 @@ SELECT
     ap.INVOICEAMOUNT   AS FATURA_VALOR,
     ap.PAYMENT_DATE    AS DATA_DE_PAGAMENTO,
     ap.INVOICEDATE     AS DATA_INVOICE,
+    -- [add 12/11/2026] Status da NFF. Só sai 'Cancelada' quando TODAS as linhas da nota estão
+    -- canceladas (o NOTAS_DEDUP prefere a não cancelada). NFF cancelada não é "a pagar":
+    -- a distribuidora refaturou e a nota foi substituída (GO-NVP-01, NFF 206974381, 09/2026).
+    -- Ver monitor.fatura_valida / marcar_substituidas.
+    ap.STATUS_INVOICE  AS STATUS_NFF,
 
     -- Colunas do 3º degrau de pagamento (parcela do Oracle). O CASE reproduz o WHERE do
     -- stg_pagamentos_installment.sql: só interessa a evidência POSITIVA ('Y' ==

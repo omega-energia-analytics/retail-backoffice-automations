@@ -75,7 +75,9 @@ class Api:
     def _carregar_base():
         monitor = carregar_monitor_nff()
         df_merged, df_projetos = monitor.carregar_base()
-        monitor.pagamento_efetivo(df_merged)  # a regra de "Pago" do painel, em toda linha
+        # As regras do painel, em toda linha: "Pago" e refaturamento (substituída/cancelada).
+        monitor.pagamento_efetivo(df_merged)
+        monitor.marcar_substituidas(df_merged)
         return df_merged, df_projetos
 
     def _baixar_logs(self, mp):

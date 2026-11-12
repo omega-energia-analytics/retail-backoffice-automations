@@ -15,6 +15,8 @@ const STATUS = {
   vencida: { label: 'Vencida sem pagamento', g: 'fail', icon: '✕' },
   paga_sem_data: { label: 'Paga (sem data no Oracle)', g: 'cancel', icon: '?' },
   sem_vencimento: { label: 'Sem vencimento no FattureWeb', g: 'cancel', icon: '?' },
+  substituida: { label: 'Substituída (refaturamento)', g: 'cancel', icon: '⊘' },
+  cancelada: { label: 'NFF cancelada no Oracle', g: 'cancel', icon: '⊘' },
 };
 
 const state = { started: false, data: null, mes: null, seq: 0 };
@@ -88,7 +90,8 @@ function renderCard2() {
     <div class="det">${k.n_atrasada} pagas com atraso · ${k.n_vencida} vencidas sem pagamento · ${k.n_a_vencer} a vencer · ${k.n_no_prazo} no prazo
       ${k.n_paga_sem_data ? ` · ${k.n_paga_sem_data} pagas sem data` : ''} · ${k.n_total} faturas · fora do prazo ${brl(k.valor_fora)}</div>
     ${k.kpi ? `<div class="det">Causas: ${k.n_nff_tardia} com NFF lançada após o vencimento · ${k.n_sem_nff} sem NFF no Oracle${k.n_data_aproximada ? ` · ${k.n_data_aproximada} com data de pagamento aproximada` : ''}</div>` : ''}
-    ${k.n_sem_vencimento ? `<div class="det">${k.n_sem_vencimento} fatura(s) chegaram neste mês sem vencimento no FattureWeb e ficaram fora da conta (ver lista).</div>` : ''}`;
+    ${k.n_sem_vencimento ? `<div class="det">${k.n_sem_vencimento} fatura(s) chegaram neste mês sem vencimento no FattureWeb e ficaram fora da conta (ver lista).</div>` : ''}
+    ${k.n_substituida || k.n_cancelada ? `<div class="det">Fora da conta: ${k.n_substituida} substituída(s) por refaturamento · ${k.n_cancelada} com NFF cancelada no Oracle (mesma regra do monitor de NFF).</div>` : ''}`;
 }
 
 // ---------- tabelas ----------
@@ -142,7 +145,7 @@ function renderLista2() {
       r.nff_tardia ? tag('NFF após o vencimento', `NFF lançada em ${data(r.data_nff)}, depois do prazo da distribuidora — não havia como pagar em dia`) : '',
       r.data_aproximada ? tag('data aproximada', 'Pagamento pela parcela do Oracle: a data é a da atualização do status, não a de caixa (mesma regra do monitor de NFF)') : '',
     ].join('');
-    const venc = r.status === 'sem_vencimento'
+    const venc = r.status === 'sem_vencimento' || !r.vencimento_fw
       ? `<span class="muted" data-tip="Chegou em ${data(r.data_chegada)}">–</span>`
       : `${data(r.vencimento_fw)}${r.prazo && r.prazo !== r.vencimento_fw ? ` <span class="muted" data-tip="Vencimento no fim de semana: prazo até ${data(r.prazo)}">→ ${data(r.prazo)}</span>` : ''}`;
     return `<tr>

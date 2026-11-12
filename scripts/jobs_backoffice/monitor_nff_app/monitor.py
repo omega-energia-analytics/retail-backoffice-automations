@@ -422,7 +422,7 @@ def _dias_para_vencer(row, hoje_date):
 # porque a query recortada devolve os DOIS blocos na mesma linha e eles precisam sair
 # separados: se STATUS_INSTALLMENT viajasse dentro de df_pag, o merge de df_inst mais
 # adiante criaria sufixos _x/_y e o 3º degrau de pagamento pararia de ser lido.
-COLS_PAG = ['NOTA_FISCAL', 'FATURA_VALOR', 'DATA_DE_PAGAMENTO', 'DATA_INVOICE']
+COLS_PAG = ['NOTA_FISCAL', 'FATURA_VALOR', 'DATA_DE_PAGAMENTO', 'DATA_INVOICE', 'STATUS_NFF']
 COLS_INST = ['NOTA_FISCAL', 'STATUS_INSTALLMENT', 'DATA_STATUS_INSTALLMENT']
 
 
@@ -432,7 +432,14 @@ def _prep_pag(df):
     na_position='first' é obrigatório: o default do pandas joga NaT pro FIM, e o
     tail(1) acabaria elegendo justamente a linha SEM data de pagamento quando a
     mesma nota tem uma linha paga e outra não — a fatura aparecia como não paga.
+
+    STATUS_NFF só vem da query recortada; no fallback (stg_pagamentos.sql) a coluna
+    não existe e entra vazia — sem status, nenhuma NFF é tratada como cancelada.
     """
+    df = df.copy()
+    for c in COLS_PAG:
+        if c not in df.columns:
+            df[c] = None
     df = df[COLS_PAG].copy()
     df['DATA_DE_PAGAMENTO'] = _to_naive(df['DATA_DE_PAGAMENTO'])
     df['DATA_INVOICE'] = _to_naive(df['DATA_INVOICE'])
@@ -761,6 +768,9 @@ def carregar_base():
     _completar_por_chave_normalizada(
         df_merged, df_pag.rename(columns={'DATA_INVOICE': 'DATA_NFF'}), ['DATA_NFF']
     )
+    # [add] STATUS_NFF pela chave normalizada, em chamada própria pelo mesmo motivo: chave
+    # ambígua perde só o status (e sem status a NFF não é tratada como cancelada).
+    _completar_por_chave_normalizada(df_merged, df_pag, ['STATUS_NFF'])
     print(
         f"[monitor] 2º passe de chave: +{n_pag} pagamentos, +{n_val} valores de fatura, "
         f"+{n_inst_key} status de parcela "
@@ -823,6 +833,81 @@ def pagamento_efetivo(df):
     df.loc[df['DATA_DE_PAGAMENTO'].notna(), 'Fonte Pagamento'] = 'ORACLE_PAYMENTS'
     df.loc[pago_parcela, 'Fonte Pagamento'] = 'ORACLE_INSTALLMENT'
     return df
+
+
+def fatura_valida(df):
+    """Série booleana: a fatura tem NFF ATIVA no Oracle ou já foi paga.
+
+    NFF ativa = há lançamento (FATURA_VALOR) e ele não está Cancelado. Paga = qualquer um dos
+    três degraus de pagamento (mesmas fontes do pagamento_efetivo). Colunas ausentes contam
+    como vazias — fixture antiga ou degrau desligado não quebra.
+    """
+    def col(c):
+        return df[c] if c in df.columns else pd.Series(None, index=df.index, dtype=object)
+
+    cancelada = col('STATUS_NFF').eq('Cancelada')
+    nff_ativa = col('FATURA_VALOR').notna() & ~cancelada
+    pago = (
+        col('DATA_DE_PAGAMENTO').notna()
+        | col('PAGAMENTO').notna()
+        | col('STATUS_INSTALLMENT').eq('Totalmente paga')
+    )
+    return nff_ativa | pago
+
+
+def marcar_substituidas(df):
+    """Cria 'Fatura Válida' e 'Substituída'. Altera `df` no lugar e devolve.
+
+    Substituída = fatura SEM NFF ativa e SEM pagamento cuja usina tem OUTRA fatura VÁLIDA da
+    MESMA competência (MES_REF_FW). É o refaturamento: a distribuidora reemite a fatura do mês
+    e só a última versão vira NFF e é paga. Caso real, Equatorial GO, competência 09/2026:
+      - GO-NVP-01: 206974381 (07/09, NFF Cancelada no Oracle) -> 207222589 (09/09, paga 15/09)
+      - GO-RIQ-02: 206974485 (07/09) e 207222540 (09/09), nunca lançadas -> 207533537 (10/09,
+        paga 09/10)
+    Sem isto o painel exibia a versão morta como "a pagar" e escondia a paga em NFF Adicionais.
+
+    Só pela MESMA competência, de propósito: usina que recebe faturas de competências
+    diferentes no mesmo mês (BA-BAR-01, mai/2026: 02, 03 e 04) não tem substituição nenhuma.
+    Sem competência (MES_REF_FW nulo) nada é marcado. Na dúvida, a fatura segue sendo cobrada.
+
+    Usada pelo montar_mes (escolha da linha exibida) e pela aba KPIs do monitor de
+    observability (fora da contagem de não pagas) — mesma regra nos dois.
+    """
+    df['Fatura Válida'] = fatura_valida(df)
+    df['Substituída'] = False
+    if 'MES_REF_FW' not in df.columns or df.empty:
+        return df
+    com_comp = df['MES_REF_FW'].notna() & df['ACRONIMO'].notna()
+    if com_comp.any():
+        grupo_tem_valida = (
+            df.loc[com_comp]
+            .groupby(['ACRONIMO', 'MES_REF_FW'])['Fatura Válida']
+            .transform('any')
+        )
+        df.loc[com_comp, 'Substituída'] = ~df.loc[com_comp, 'Fatura Válida'] & grupo_tem_valida
+    return df
+
+
+def _trocar_substituidas(df_mes, df_recent):
+    """Se a linha escolhida pelo tail(1) é uma fatura substituída, exibe no lugar a versão
+    válida da mesma competência (a que chegou por último). Linha escolhida que não é
+    substituída sai idêntica — a regra só alcança o refaturamento."""
+    if df_recent.empty or df_mes.empty:
+        return df_recent
+    marcadas = marcar_substituidas(df_mes.copy())
+    trocar = [i for i in df_recent.index if bool(marcadas.at[i, 'Substituída'])]
+    if not trocar:
+        return df_recent
+    novas = []
+    for i in trocar:
+        r = marcadas.loc[i]
+        irmas = marcadas[
+            (marcadas['ACRONIMO'] == r['ACRONIMO'])
+            & (marcadas['MES_REF_FW'] == r['MES_REF_FW'])
+            & marcadas['Fatura Válida']
+        ]
+        novas.append(irmas.sort_values('DATA_CHEGADA', na_position='first').index[-1])
+    return pd.concat([df_recent.drop(index=trocar), df_mes.loc[novas]])
 
 
 def listar_meses(df_merged, hoje=None):
@@ -927,7 +1012,7 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # ap_oracle_view ainda não expõe o status (degrau desligado em carregar_base) ou em
     # fixtures de teste montadas à mão — garantir a presença mantém o resto do fluxo igual.
     for c in ('STATUS_INSTALLMENT', 'DATA_STATUS_INSTALLMENT', 'FATURA_ID', 'TOTAL_DA_FATURA',
-              'FATURA_VALOR'):
+              'FATURA_VALOR', 'STATUS_NFF'):
         if c not in df_mes.columns:
             df_mes[c] = None
 
@@ -954,6 +1039,11 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
         .tail(1)
         .copy()
     )
+    # [fix 12/11/2026] Refaturamento: se a escolhida é uma versão substituída (NFF cancelada ou
+    # nunca lançada, com outra fatura válida da mesma competência), exibe a válida. Ver
+    # marcar_substituidas. A substituída continua contada em 'Faturas no Mês' e listada em
+    # 'NFF Adicionais' (que sai de nffs_por_acronimo, calculado antes).
+    df_recent = _trocar_substituidas(df_mes, df_recent).copy()
     df_recent['_NFFS_MES'] = df_recent['ACRONIMO'].map(nffs_por_acronimo)
 
     # Diagnóstico: acrônimos que ficaram sem fatura no mês
@@ -965,7 +1055,8 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     df = df_projetos.merge(
         df_recent[['ACRONIMO','NOTA_FISCAL','DATA_REFERENCIA','DATA_CHEGADA','DATA_DE_PAGAMENTO',
                    'PAGAMENTO','UC','STATUS_INSTALLMENT','DATA_STATUS_INSTALLMENT',
-                   'MES_REF_FW','_NFFS_MES','FATURA_ID','TOTAL_DA_FATURA','FATURA_VALOR']],
+                   'MES_REF_FW','_NFFS_MES','FATURA_ID','TOTAL_DA_FATURA','FATURA_VALOR',
+                   'STATUS_NFF']],
         on='ACRONIMO',
         how='left'
     )
@@ -1031,13 +1122,17 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # exportação e filtros seguem lendo o mesmo valor. É a UI que exibe "Zerada".
     # Total AUSENTE não é zero: NaN.eq(0) é False, então fatura sem total segue "A pagar".
     df['Fatura Zerada'] = total_fw.eq(0)
+    # [add 12/11/2026] NFF cancelada no Oracle: não é "a pagar". Depois do _trocar_substituidas
+    # ela só é exibida quando não existe versão válida da mesma competência. Mesma lógica da
+    # 'Fatura Zerada': coluna própria, 'Pago' continua booleano, e é a UI que exibe "Cancelada".
+    df['NFF Cancelada'] = df['STATUS_NFF'].eq('Cancelada') & ~df['Pago']
     # Colunas novas entram no FIM: consumidores existentes leem por nome, então a ordem antiga
     # segue intacta ('Fonte Pagamento' entrou pela mesma razão).
     cols = ['Projeto','ACRONIMO','Distribuidora','Dia','Forma Recebimento',
              'Data Esperada','Data Chegada','Status','Dias Restantes',
              'NFF','UC','Pago','Data Pagamento','Fonte Pagamento',
              'Competência','Faturas no Mês','NFF Adicionais','Fatura ID','Total Fatura',
-             'Valor Oracle','Divergência Valor','Fatura Zerada']
+             'Valor Oracle','Divergência Valor','Fatura Zerada','NFF Cancelada']
     df_out = df[cols]
 
     # sanitiza NaN/NaT -> None pra JSON válido

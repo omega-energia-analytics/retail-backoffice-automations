@@ -2,7 +2,8 @@
 
 FONTE ÚNICA = MONITOR DE NFF. A entrada é o `df_merged`/`df_projetos` do
 `monitor_nff_app/monitor.carregar_base()`, já com `monitor.pagamento_efetivo()` aplicado
-(colunas 'Pago', 'Data Pagamento Efetiva', 'Fonte Pagamento'). Assim universo de usinas
+(colunas 'Pago', 'Data Pagamento Efetiva', 'Fonte Pagamento') e `monitor.marcar_substituidas()`
+(colunas 'Fatura Válida', 'Substituída'). Assim universo de usinas
 (PROJETOS FW/E-MAIL), NFF, "Pago", data de pagamento, Valor Oracle e "Fatura Zerada" são
 exatamente os do painel do monitor — os KPIs só agregam de outro jeito (por fatura, e não pela
 linha exibida de cada projeto/mês). Não recalcule nada disso aqui: se uma regra mudar, ela muda
@@ -27,6 +28,9 @@ KPI 2 — faturas CUSD não pagas no prazo
         vencida       = não paga e o prazo já passou (inclui fatura que nunca virou NFF)
         a vencer      = não paga e o prazo ainda não passou
         paga s/ data  = paga pela parcela do Oracle, sem data nenhuma: fora da contagem
+        substituída   = refaturamento: a usina tem outra fatura válida da mesma competência
+                        (regra do monitor, marcar_substituidas): fora da contagem, listada
+        cancelada     = NFF cancelada no Oracle sem versão válida: fora da contagem, listada
         sem vencimento = sem vencimento no FattureWeb: não dá para julgar, fica listada pelo
                          mês de chegada e fora da contagem
     KPI = atrasadas + vencidas. Vencimento em sábado/domingo vale até o próximo dia útil
@@ -48,7 +52,8 @@ _NULOS = {"", "nan", "None", "NaN", "<NA>", "NaT"}
 
 COLUNAS_ESPERADAS = [
     "NOTA_FISCAL", "ACRONIMO", "FONTE", "UC", "FATURA_VALOR", "TOTAL_DA_FATURA", "DATA_NFF",
-    "VENCIMENTO_FW", "DATA_CHEGADA", "Pago", "Data Pagamento Efetiva", "Fonte Pagamento",
+    "VENCIMENTO_FW", "DATA_CHEGADA", "MES_REF_FW", "STATUS_NFF", "Pago",
+    "Data Pagamento Efetiva", "Fonte Pagamento", "Substituída",
 ]
 
 
@@ -169,8 +174,10 @@ def preparar(df_merged, df_projetos):
     d["VALOR_ORACLE"] = pd.to_numeric(d["FATURA_VALOR"], errors="coerce")
     d["TOTAL_FW"] = pd.to_numeric(d["TOTAL_DA_FATURA"].map(dinheiro), errors="coerce")
     d["ZERADA"] = d["TOTAL_FW"].eq(0)  # = 'Fatura Zerada' do monitor
-    d["TEM_NFF"] = d["VALOR_ORACLE"].notna() | d["DATA_NFF"].notna()
     d["PAGO"] = d["Pago"].fillna(False).astype(bool)
+    d["CANCELADA"] = d["STATUS_NFF"].eq("Cancelada") & ~d["PAGO"]  # = 'NFF Cancelada' do monitor
+    d["SUBSTITUIDA"] = d["Substituída"].fillna(False).astype(bool)
+    d["TEM_NFF"] = (d["VALOR_ORACLE"].notna() | d["DATA_NFF"].notna()) & ~d["STATUS_NFF"].eq("Cancelada")
     d["DATA_PAGAMENTO"] = d["Data Pagamento Efetiva"]
     d["FONTE_PAGAMENTO"] = d["Fonte Pagamento"]
     d["NFF"] = d["NOTA_FISCAL"]
@@ -236,8 +243,10 @@ def kpi2(d, hoje, meses):
     # âncora do painel do monitor), fora da contagem, para a ausência ficar visível.
     sem_venc = vivas[vivas["VENCIMENTO_FW"].isna() & vivas["DATA_CHEGADA"].notna()].copy()
     sem_venc["MES"] = sem_venc["DATA_CHEGADA"].dt.strftime("%Y-%m")
-    sem_venc = sem_venc[sem_venc["MES"] >= meses[0]]
-    sem_venc["STATUS"] = "sem_vencimento"
+    sem_venc = sem_venc[sem_venc["MES"] >= meses[0]].copy()
+    sem_venc["STATUS"] = np.select(
+        [~sem_venc["PAGO"] & sem_venc["SUBSTITUIDA"], sem_venc["CANCELADA"]],
+        ["substituida", "cancelada"], default="sem_vencimento")
 
     base = vivas[vivas["VENCIMENTO_FW"].notna()].copy()
     base["MES"] = base["VENCIMENTO_FW"].dt.strftime("%Y-%m")
@@ -251,8 +260,10 @@ def kpi2(d, hoje, meses):
         [pago & data_pg.notna() & (data_pg <= base["PRAZO"]),
          pago & data_pg.notna(),
          pago,
+         base["SUBSTITUIDA"],   # refaturada: a versão válida é que conta (regra do monitor)
+         base["CANCELADA"],     # NFF cancelada no Oracle, sem versão válida
          base["PRAZO"] < hoje],
-        ["no_prazo", "atrasada", "paga_sem_data", "vencida"],
+        ["no_prazo", "atrasada", "paga_sem_data", "substituida", "cancelada", "vencida"],
         default="a_vencer")
     referencia = data_pg.where(pago & data_pg.notna(), hoje)
     base["DIAS_ATRASO"] = np.where(
@@ -271,13 +282,15 @@ def kpi2(d, hoje, meses):
         n = g["STATUS"].value_counts()
         fora = g[g["STATUS"].isin(["atrasada", "vencida"])]
         por_mes[m] = {
-            "n_total": int((g["STATUS"] != "sem_vencimento").sum()),
+            "n_total": int((~g["STATUS"].isin(["sem_vencimento", "substituida", "cancelada"])).sum()),
             "n_no_prazo": int(n.get("no_prazo", 0)),
             "n_atrasada": int(n.get("atrasada", 0)),
             "n_vencida": int(n.get("vencida", 0)),
             "n_a_vencer": int(n.get("a_vencer", 0)),
             "n_paga_sem_data": int(n.get("paga_sem_data", 0)),
             "n_sem_vencimento": int(n.get("sem_vencimento", 0)),
+            "n_substituida": int(n.get("substituida", 0)),
+            "n_cancelada": int(n.get("cancelada", 0)),
             "kpi": int(len(fora)),
             "valor_fora": round(float(fora["VALOR"].fillna(0).sum()), 2),
             "n_nff_tardia": int(fora["NFF_TARDIA"].sum()),
@@ -288,7 +301,8 @@ def kpi2(d, hoje, meses):
     cols = ["MES", "NFF", "USINA", "DISTRIBUIDORA", "VENCIMENTO_FW", "PRAZO", "DATA_PAGAMENTO",
             "FONTE_PAGAMENTO", "VALOR", "STATUS", "DIAS_ATRASO", "SEM_NFF", "NFF_TARDIA",
             "DATA_APROXIMADA", "DATA_NFF", "DATA_CHEGADA"]
-    problemas = todas[todas["STATUS"].isin(["atrasada", "vencida", "paga_sem_data", "sem_vencimento"])]
+    problemas = todas[todas["STATUS"].isin(
+        ["atrasada", "vencida", "paga_sem_data", "sem_vencimento", "substituida", "cancelada"])]
     return {
         "por_mes": por_mes,
         "linhas": _registros(problemas.sort_values(["MES", "STATUS", "USINA"]), cols),

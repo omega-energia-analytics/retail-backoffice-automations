@@ -174,3 +174,17 @@ def test_registrar_run_sem_chave_no_conf_nao_levanta(tmp_path, monkeypatch):
 def test_registrar_run_com_df_quebrado_nao_levanta(tmp_path, capsys):
     qlog.registrar_run(object(), CONF, pasta=tmp_path)
     assert "não foi possível gravar o log local" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# conf real — o caminho do SharePoint precisa chegar com acento intacto
+# ---------------------------------------------------------------------------
+
+def test_conf_le_pasta_shp_com_acento_intacto():
+    """Regressão de 12/11/2026: lido em cp1252, 'Geração' virou 'GeraÃ§Ã£o' e o upload
+    criou uma pasta paralela no SharePoint. Falha em qualquer Windows se o encoding sumir."""
+    from utils.utils_usinas import get_conf_by_project
+
+    mp = get_conf_by_project("cusd_invoices")["model_parameters"]
+    assert "13 - Geração Distribuída" in mp["log_quick_invoices"]["pasta_shp"]
+    assert "Ã" not in mp["input_files"]["shp"]["filepath"]

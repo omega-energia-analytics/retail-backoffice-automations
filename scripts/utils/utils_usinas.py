@@ -30,7 +30,10 @@ def log_error(msg):
 def get_conf_by_project(project):
     # with open(f'conf/conf_{project}.yml', 'r') as file:     # usar no rateio
     conf_path = Path(__file__).resolve().parent.parent / 'conf' / f'conf_{project}.yml'
-    with open(conf_path, 'r') as file:
+    # encoding explícito: sem ele o Windows abre em cp1252 e todo acento do conf (que é
+    # UTF-8) vira mojibake — 'Geração' virava 'GeraÃ§Ã£o' e o upload do log do quickinvoices
+    # criou uma pasta nova com esse nome no SharePoint (12/11/2026).
+    with open(conf_path, 'r', encoding='utf-8') as file:
         conf = yaml.safe_load(file)
     return conf
 

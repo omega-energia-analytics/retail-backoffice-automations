@@ -139,6 +139,10 @@ model_parameters:
       CEPISA: EQUATORIAL PIAUI DISTRIBUIDORA DE ENERGIA S.A
       COELBA: COMPANHIA DE ELETRICIDADE DO ESTADO DA BAHIA COELBA
       CEMIG: CEMIG DISTRIBUICAO S.A
+      # Mesma distribuidora (CNPJ 06.981.180/0001-16): MONITORAMENTO_CUSD_AWS e FattureWeb
+      # passaram a mandar CEMIGD. Sem esta linha a NFF ia para a planilha com fornecedor vazio
+      # (NFF 446361888, run de 12/11/2026). Repetida em supplier_number abaixo.
+      CEMIGD: CEMIG DISTRIBUICAO S.A
       ENELCE: COMPANHIA ENERGETICA DO CEARA
       CELGD: EQUATORIAL GOIAS DISTRIBUIDORA DE ENERGIA S/A
       ENELRJ: AMPLA ENERGIA E SERVICOS S.A.
@@ -155,6 +159,7 @@ model_parameters:
       CEPISA: "068407480"
       COELBA: "11405"
       CEMIG: "069811800"
+      CEMIGD: "069811800"   # ver CEMIGD em supplier_name
       ENELCE: "16181"
       CELGD: "15284"
       ENELRJ: "330500710"

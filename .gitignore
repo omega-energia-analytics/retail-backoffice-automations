@@ -255,7 +255,7 @@ recursos_old/
 dbt-core-apps/
 
 # Notebooks: a regra so existia dentro de prefect-resources/.
-*.ipynb
+# *.ipynb
 
 .claude/scheduled_tasks.lock
 

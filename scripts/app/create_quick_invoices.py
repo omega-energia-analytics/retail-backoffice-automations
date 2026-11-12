@@ -13,6 +13,7 @@ from utils.utils_usinas import (
 import xlwings as xw
 import datetime as dt
 from pathlib import Path
+from app.quick_invoices_log import registrar_run
 
 # Colunas que identificam a usina na fonte (stg_cusd_monitoring.sql). Não vão para a
 # planilha — existem só para o bloqueio, e são removidas depois dele.
@@ -199,5 +200,11 @@ class CreateQuickInvoices():
     def run(self, **kwargs):
         df = self.get_invoices(**kwargs)
         cleared_content_log, inserted_data_log, format_change_log = self.send_to_quick_invoices(df)
+
+        # Registra o que foi para a planilha — base do KPI de NFFs lançadas pela automação.
+        # Depois da escrita de propósito (só loga o que de fato foi escrito) e nunca levanta
+        # exceção: ver quick_invoices_log.py.
+        registrar_run(df, self.conf, parametros=kwargs)
+
         return cleared_content_log, inserted_data_log, format_change_log, df
     

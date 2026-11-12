@@ -77,6 +77,12 @@ model_parameters:
         oracle_sheet_column: AE9
         input_column: GRUPO_DE_PAGAMENTOS
 
+  # Log de cada execução do quickinvoices (app/quick_invoices_log.py), lido pelo monitor de
+  # observability para o KPI "% das NFFs CUSD lançadas pela automação". Grava primeiro em
+  # ~/Faturas Oracle/log_quickinvoices/ e sobe para esta pasta no mesmo drive de input_files.shp.
+  log_quick_invoices:
+    pasta_shp: "OMG/03 - Backoffice/13 - Geração Distribuída/log_quickinvoices"
+
   input_files:
     shp:
       drive_id: b!njzzOBmN2E-qGav4ADm6t7FbPjsoMwtPv5nwnDr7ikwHcuavd4_cQ6taAKNI-lNp

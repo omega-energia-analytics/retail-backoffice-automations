@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor Observability</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="tabs" role="tablist">
+  <button class="tab on" role="tab" data-tab="gh">Deploys <span class="muted">GitHub Actions</span><span class="badge" id="gh-badge" hidden></span></button>
+  <button class="tab" role="tab" data-tab="pf">Execuções <span class="muted">Prefect</span><span class="badge" id="pf-badge" hidden></span></button>
+</nav>
+
+<main class="view" id="view-gh">
+<header class="top">
+  <div>
+    <h1>Monitor Deploys</h1>
+    <div class="sub" id="gh-sub">GitHub Actions</div>
+  </div>
+  <div class="status">
+    <span id="gh-status-text">Conectando…</span>
+    <label>Auto
+      <select id="gh-f-auto">
+        <option value="0">desligado</option>
+        <option value="1">1 min</option>
+        <option value="5" selected>5 min</option>
+        <option value="15">15 min</option>
+      </select>
+    </label>
+    <button id="gh-btn-refresh" class="btn">Atualizar</button>
+  </div>
+</header>
+
+<div id="gh-error" class="banner warn" hidden></div>
+<div id="gh-news" class="banner fail" hidden></div>
+
+<section class="filters">
+  <label>Período
+    <select id="gh-f-dias">
+      <option value="7">7 dias</option>
+      <option value="30" selected>30 dias</option>
+      <option value="90">90 dias</option>
+      <option value="180">180 dias</option>
+    </select>
+  </label>
+  <span class="sep"></span>
+  <input type="search" id="gh-f-busca" placeholder="Buscar workflow…">
+  <label>Ambiente
+    <select id="gh-f-env">
+      <option value="">Todos</option>
+      <option value="stg">stg</option>
+      <option value="prod">prod</option>
+    </select>
+  </label>
+  <label>Tipo
+    <select id="gh-f-kind"><option value="">Todos</option></select>
+  </label>
+  <label>Último run
+    <select id="gh-f-ultimo">
+      <option value="">Todos</option>
+      <option value="fail">Falha</option>
+      <option value="ok">Sucesso</option>
+      <option value="cancel">Cancelado</option>
+      <option value="active">Em andamento</option>
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" id="gh-f-comfalha"> Só com falha no período</label>
+</section>
+
+<section class="tiles" id="gh-tiles"></section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Workflows de deploy <span id="gh-count" class="muted"></span></h2>
+    <div class="legend" id="gh-legend"></div>
+  </div>
+  <table class="grid">
+    <thead><tr id="gh-thead"></tr></thead>
+    <tbody id="gh-tbody"></tbody>
+  </table>
+</section>
+</main>
+
+<main class="view" id="view-pf" hidden>
+<header class="top">
+  <div>
+    <h1>Monitor Prefect</h1>
+    <div class="sub" id="pf-sub">prefect3.srna.co</div>
+  </div>
+  <div class="status">
+    <span id="pf-status-text">Conectando…</span>
+    <label>Auto
+      <select id="pf-f-auto">
+        <option value="0">desligado</option>
+        <option value="1">1 min</option>
+        <option value="5" selected>5 min</option>
+        <option value="15">15 min</option>
+      </select>
+    </label>
+    <button id="pf-btn-refresh" class="btn">Atualizar</button>
+  </div>
+</header>
+
+<div id="pf-error" class="banner warn" hidden></div>
+<div id="pf-news" class="banner fail" hidden></div>
+
+<section class="filters">
+  <label>De <input type="month" id="pf-f-de"></label>
+  <label>Até <input type="month" id="pf-f-ate"></label>
+  <div class="quick">
+    <button class="chip" data-quick="este">Este mês</button>
+    <button class="chip" data-quick="passado">Mês passado</button>
+    <button class="chip" data-quick="tudo" id="pf-quick-tudo">Desde o início</button>
+  </div>
+  <span class="sep"></span>
+  <input type="search" id="pf-f-busca" placeholder="Buscar deployment…">
+  <label>Último run
+    <select id="pf-f-ultimo">
+      <option value="">Todos</option>
+      <option value="fail">Falha</option>
+      <option value="ok">Sucesso</option>
+      <option value="cancel">Cancelado</option>
+      <option value="active">Em andamento</option>
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" id="pf-f-comfalha"> Só com falha no período</label>
+</section>
+
+<section class="tiles" id="pf-tiles"></section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Deployments <span id="pf-count" class="muted"></span></h2>
+    <div class="legend" id="pf-legend"></div>
+  </div>
+  <table class="grid">
+    <thead><tr id="pf-thead"></tr></thead>
+    <tbody id="pf-tbody"></tbody>
+  </table>
+</section>
+</main>
+
+<div id="tip" class="tip" hidden></div>
+<script src="github.js"></script>
+<script src="prefect.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

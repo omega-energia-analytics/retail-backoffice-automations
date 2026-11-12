@@ -577,6 +577,10 @@ def carregar_base():
     # Não confundir com MES_REF_FW (competência, sempre dia 1º) nem com o INVOICEDATE do
     # Oracle (lançamento contábil, que pode ser bem depois — 27/07 pra fatura de 14/07).
     df_fw['DATA_EMISSAO_FW'] = _to_naive(df_fw['DATA_DE_EMISSAO_DA_FATURA'], dayfirst=True)
+    # [add] Vencimento impresso na fatura (prazo da distribuidora). O painel não usa; é a base
+    # do KPI 2 (faturas não pagas no prazo) da aba KPIs do monitor de observability, que lê
+    # este mesmo carregar_base() para os números baterem com o painel.
+    df_fw['VENCIMENTO_FW'] = _to_naive(df_fw['DATA_DE_VENCIMENTO_DA_FATURA'], dayfirst=True)
     # mantém o registro mais recente por NFF.
     # na_position='first' pelo mesmo motivo do df_pag: com o default, uma nota que
     # tem duas linhas no fattureweb (uma com apresentação, outra sem) elegia a SEM
@@ -586,7 +590,8 @@ def carregar_base():
         'DATA_DA_APRESENTACAO_DA_FATURA', na_position='first'
     ).groupby('NOTA_FISCAL', as_index=False).tail(1)
     df_fw_keep = df_fw[['NOTA_FISCAL','DATA_DA_APRESENTACAO_DA_FATURA','NUMERO_DA_INSTALACAO',
-                        'MES_REF_FW','DATA_EMISSAO_FW','ENDERECO','FATURA_ID','TOTAL_DA_FATURA']].rename(
+                        'MES_REF_FW','DATA_EMISSAO_FW','ENDERECO','FATURA_ID','TOTAL_DA_FATURA',
+                        'VENCIMENTO_FW']].rename(
         columns={'DATA_DA_APRESENTACAO_DA_FATURA': 'DATA_APRES_FW', 'NUMERO_DA_INSTALACAO': 'UC'}
     )
     print(f"[monitor] {len(df_fw_keep)} faturas no fattureweb_usinas", flush=True)
@@ -747,6 +752,15 @@ def carregar_base():
     n_inst_key, amb_inst = _completar_por_chave_normalizada(
         df_merged, df_inst, ['STATUS_INSTALLMENT', 'DATA_STATUS_INSTALLMENT']
     )
+    # [add] DATA_NFF = data da NFF no Oracle (INVOICEDATE), também pela chave normalizada.
+    # Coluna NOVA de propósito: DATA_INVOICE alimenta a cascata de mês e completá-la moveria
+    # faturas de mês no painel (ver acima). Aqui é só leitura para a aba KPIs do monitor de
+    # observability (KPI 1 pelo mês da NFF; KPI 2 marca NFF lançada depois do vencimento).
+    # Chamada própria pelo mesmo motivo do FATURA_VALOR: chave ambígua perde só esta coluna.
+    df_merged['DATA_NFF'] = df_merged['DATA_INVOICE']
+    _completar_por_chave_normalizada(
+        df_merged, df_pag.rename(columns={'DATA_INVOICE': 'DATA_NFF'}), ['DATA_NFF']
+    )
     print(
         f"[monitor] 2º passe de chave: +{n_pag} pagamentos, +{n_val} valores de fatura, "
         f"+{n_inst_key} status de parcela "
@@ -763,6 +777,52 @@ def carregar_base():
     print(f"[monitor] parcela paga: {n_inst} faturas ({n_so_inst} só por essa fonte)", flush=True)
 
     return df_merged, df_projetos
+
+
+def pagamento_efetivo(df):
+    """Responde "essa fatura foi paga, e quando?". Altera `df` no lugar e devolve.
+
+    Cria 'Data Pagamento Efetiva' (datetime), 'Pago' (bool) e 'Fonte Pagamento'. Precisa de
+    DATA_DE_PAGAMENTO, PAGAMENTO, STATUS_INSTALLMENT e DATA_STATUS_INSTALLMENT.
+
+    Função própria (era inline no montar_mes) para ser A regra única de pagamento: o painel a
+    aplica na linha exibida de cada projeto/mês, e a aba KPIs do monitor de observability a
+    aplica em todas as linhas do carregar_base() — os dois têm que dar o mesmo "Pago" para a
+    mesma NFF. Mudou a regra? Muda aqui e vale para os dois.
+
+    "Pago" combina TRÊS fontes, em cascata de precedência:
+      1. AP_ORACLE_VIEW.PAYMENT_DATE  (DATA_DE_PAGAMENTO) — data real do pagamento
+      2. monitoramento_cusd_aws       (PAGAMENTO)         — mais fresca que o Oracle
+      3. status da parcela no Oracle  (STATUS_INSTALLMENT) — [add] ver abaixo
+    É OR, nunca AND: as fontes divergem nos dois sentidos (há fatura paga em AP_PAYMENTS cuja
+    parcela ainda diz 'Não paga'). Basta uma indicar pagamento.
+    """
+    df['Data Pagamento Efetiva'] = df['DATA_DE_PAGAMENTO'].fillna(df['PAGAMENTO'])
+    # [add] 3º degrau. O Oracle marcou a parcela como 'Totalmente paga' mas o pagamento não
+    # chegou em AP_PAYMENTS — sem este degrau a fatura fica "A pagar" mesmo paga (jun/2026:
+    # 2.372 faturas, 4 das 6 usinas do mês). Aqui NÃO existe data de pagamento real; a melhor
+    # âncora é UPDATED_AT_INSTALLMENT, o instante em que o Oracle virou o status — daí a data
+    # ser marcada como aproximada em "Fonte Pagamento".
+    # ADITIVO: só alcança linhas que hoje ficariam sem pagamento nenhum (o fillna não
+    # sobrescreve), então quem já tinha data pelos degraus 1/2 sai idêntico.
+    pago_parcela = (
+        df['Data Pagamento Efetiva'].isna()
+        & df['STATUS_INSTALLMENT'].eq('Totalmente paga')
+    )
+    df['Data Pagamento Efetiva'] = df['Data Pagamento Efetiva'].fillna(
+        df['DATA_STATUS_INSTALLMENT'].where(pago_parcela)
+    )
+    # `| pago_parcela` blinda o caso de parcela paga com UPDATED_AT nulo/ilegível: a fatura
+    # está paga mesmo sem data, e sem isso ela voltaria a aparecer como "A pagar".
+    df['Pago'] = df['Data Pagamento Efetiva'].notna() | pago_parcela
+    # [add] Qual degrau respondeu — a UI usa pra sinalizar que a data do 3º é aproximada, e
+    # serve de rastro na exportação. A ordem das atribuições espelha a precedência da cascata
+    # (a última que se aplica vence); pago_parcela por construção só é True quando 1 e 2 falharam.
+    df['Fonte Pagamento'] = None
+    df.loc[df['PAGAMENTO'].notna(), 'Fonte Pagamento'] = 'MONITORAMENTO'
+    df.loc[df['DATA_DE_PAGAMENTO'].notna(), 'Fonte Pagamento'] = 'ORACLE_PAYMENTS'
+    df.loc[pago_parcela, 'Fonte Pagamento'] = 'ORACLE_INSTALLMENT'
+    return df
 
 
 def listar_meses(df_merged, hoje=None):
@@ -920,38 +980,8 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # aparecia "chegando" no dia 1º, e uma posicionada pelo lançamento contábil aparecia
     # chegando semanas depois do que de fato chegou.
     df['Data Chegada'] = df['DATA_CHEGADA']
-    # "Pago" combina TRÊS fontes, em cascata de precedência:
-    #   1. AP_ORACLE_VIEW.PAYMENT_DATE  (DATA_DE_PAGAMENTO) — data real do pagamento
-    #   2. monitoramento_cusd_aws       (PAGAMENTO)         — mais fresca que o Oracle
-    #   3. status da parcela no Oracle  (STATUS_INSTALLMENT) — [add] ver abaixo
-    # É OR, nunca AND: as fontes divergem nos dois sentidos (há fatura paga em AP_PAYMENTS cuja
-    # parcela ainda diz 'Não paga'). Basta uma indicar pagamento.
-    df['Data Pagamento Efetiva'] = df['DATA_DE_PAGAMENTO'].fillna(df['PAGAMENTO'])
-    # [add] 3º degrau. O Oracle marcou a parcela como 'Totalmente paga' mas o pagamento não
-    # chegou em AP_PAYMENTS — sem este degrau a fatura fica "A pagar" mesmo paga (jun/2026:
-    # 2.372 faturas, 4 das 6 usinas do mês). Aqui NÃO existe data de pagamento real; a melhor
-    # âncora é UPDATED_AT_INSTALLMENT, o instante em que o Oracle virou o status — daí a data
-    # ser marcada como aproximada em "Fonte Pagamento".
-    # ADITIVO: só alcança linhas que hoje ficariam sem pagamento nenhum (o fillna não
-    # sobrescreve), então quem já tinha data pelos degraus 1/2 sai idêntico.
-    pago_parcela = (
-        df['Data Pagamento Efetiva'].isna()
-        & df['STATUS_INSTALLMENT'].eq('Totalmente paga')
-    )
-    df['Data Pagamento Efetiva'] = df['Data Pagamento Efetiva'].fillna(
-        df['DATA_STATUS_INSTALLMENT'].where(pago_parcela)
-    )
-    # `| pago_parcela` blinda o caso de parcela paga com UPDATED_AT nulo/ilegível: a fatura
-    # está paga mesmo sem data, e sem isso ela voltaria a aparecer como "A pagar".
-    df['Pago'] = df['Data Pagamento Efetiva'].notna() | pago_parcela
+    pagamento_efetivo(df)
     df['Data Pagamento'] = df['Data Pagamento Efetiva'].dt.strftime('%d/%m/%Y').where(df['Data Pagamento Efetiva'].notna(), None)
-    # [add] Qual degrau respondeu — a UI usa pra sinalizar que a data do 3º é aproximada, e
-    # serve de rastro na exportação. A ordem das atribuições espelha a precedência da cascata
-    # (a última que se aplica vence); pago_parcela por construção só é True quando 1 e 2 falharam.
-    df['Fonte Pagamento'] = None
-    df.loc[df['PAGAMENTO'].notna(), 'Fonte Pagamento'] = 'MONITORAMENTO'
-    df.loc[df['DATA_DE_PAGAMENTO'].notna(), 'Fonte Pagamento'] = 'ORACLE_PAYMENTS'
-    df.loc[pago_parcela, 'Fonte Pagamento'] = 'ORACLE_INSTALLMENT'
     df['NFF'] = df['NOTA_FISCAL']
 
     # [add] Competência (MES_DE_REFERENCIA do FattureWeb, sempre dia 1º) exibida como MM/AAAA.

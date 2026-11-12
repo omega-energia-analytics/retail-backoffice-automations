@@ -135,3 +135,16 @@ table.runs { border-collapse: collapse; font-size: 12px; width: 100%; }
 .badge { display: inline-block; min-width: 18px; margin-left: 8px; padding: 0 6px; border-radius: 9px; font-size: 11px; line-height: 18px; text-align: center; color: #fff; background: var(--s-fail); }
 .badge[hidden] { display: none; }
 .view[hidden] { display: none; }
+
+/* Específicos da aba KPIs. */
+.kpi-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-height: 150px; }
+.kpi-card .k { color: var(--muted); font-size: 12px; }
+.kpi-card .v { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 4px 0 6px; }
+.kpi-card .v.na { font-size: 22px; color: var(--muted); font-weight: 500; margin: 14px 0 8px; }
+.kpi-card .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--text-2); font-size: 12px; }
+.kpi-card .meta .tag { margin-left: 0; }
+.kpi-card .det { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+.grid tr.sel td { background: var(--hover); }
+#view-kp .panel { margin-bottom: 14px; }
+.foot { color: var(--muted); font-size: 12px; }

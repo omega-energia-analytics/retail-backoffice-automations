@@ -1228,3 +1228,43 @@ def test_completar_valor_em_chamada_separada_da_data():
     assert df.loc[0, 'DATA_DE_PAGAMENTO'] == Timestamp('2026-06-16')
     assert (n_val, amb_val) == (0, 1)          # valor descartado, e é o pior caso aceitável
     assert pd.isna(df.loc[0, 'FATURA_VALOR'])
+
+
+# ---------------------------------------------------------------------------
+# pagamento_efetivo — a regra única de "Pago" (painel e aba KPIs da observability)
+# ---------------------------------------------------------------------------
+
+def _pag(**cols):
+    base = {
+        'DATA_DE_PAGAMENTO': [pd.NaT], 'PAGAMENTO': [pd.NaT],
+        'STATUS_INSTALLMENT': [None], 'DATA_STATUS_INSTALLMENT': [pd.NaT],
+    }
+    base.update({k: [v] for k, v in cols.items()})
+    return monitor.pagamento_efetivo(pd.DataFrame(base)).iloc[0]
+
+
+def test_pagamento_efetivo_oracle_vence_monitoramento():
+    r = _pag(DATA_DE_PAGAMENTO=Timestamp('2026-06-10'), PAGAMENTO=Timestamp('2026-06-12'))
+    assert r['Pago'] and r['Data Pagamento Efetiva'] == Timestamp('2026-06-10')
+    assert r['Fonte Pagamento'] == 'ORACLE_PAYMENTS'
+
+
+def test_pagamento_efetivo_monitoramento_cobre_oracle_vazio():
+    r = _pag(PAGAMENTO=Timestamp('2026-06-12'))
+    assert r['Pago'] and r['Fonte Pagamento'] == 'MONITORAMENTO'
+
+
+def test_pagamento_efetivo_parcela_paga_com_data_aproximada():
+    r = _pag(STATUS_INSTALLMENT='Totalmente paga', DATA_STATUS_INSTALLMENT=Timestamp('2026-06-20'))
+    assert r['Pago'] and r['Data Pagamento Efetiva'] == Timestamp('2026-06-20')
+    assert r['Fonte Pagamento'] == 'ORACLE_INSTALLMENT'
+
+
+def test_pagamento_efetivo_parcela_paga_sem_data_continua_paga():
+    r = _pag(STATUS_INSTALLMENT='Totalmente paga')
+    assert r['Pago'] and pd.isna(r['Data Pagamento Efetiva'])
+
+
+def test_pagamento_efetivo_sem_evidencia_nao_esta_pago():
+    r = _pag()
+    assert not r['Pago'] and r['Fonte Pagamento'] is None

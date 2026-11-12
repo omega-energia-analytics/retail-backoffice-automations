@@ -217,6 +217,21 @@ Quem traduz é a UI: com `Pago` falso e `Fatura Zerada` verdadeiro, a célula mo
 a fatura sai do card/chip "A pagar" e entra em "Zeradas", e a exportação escreve `Zerada` na coluna
 Pago. Total **ausente** não é zero: sem `Total Fatura`, a fatura segue "A pagar".
 
+### A aba KPIs do monitor de observability lê esta base
+
+`observability/monitor_observability_app` (aba KPIs) não tem query própria: chama
+`carregar_base()` e aplica `pagamento_efetivo()` em todas as linhas, para que NFF, "Pago", data
+de pagamento e valores batam com este painel por construção. Consequências para quem mexe aqui:
+
+- **`pagamento_efetivo()` é a regra única de "Pago".** Era inline no `montar_mes`; saiu para uma
+  função para os dois consumidores usarem a mesma. Mudou a cascata? Muda ali.
+- **Duas colunas existem só para os KPIs** (o painel não as exibe): `VENCIMENTO_FW` (vencimento
+  impresso na fatura, do FattureWeb) e `DATA_NFF` (INVOICEDATE do Oracle, completada pela chave
+  normalizada em chamada própria). `DATA_NFF` é coluna nova e não reaproveita `DATA_INVOICE` de
+  propósito: completar `DATA_INVOICE` moveria faturas de mês na cascata.
+- Renomear ou remover colunas do `df_merged` quebra a aba KPIs — os testes dela
+  (`jobs_backoffice/tests/test_kpis_cusd.py`) carregam este `monitor.py` e pegam isso.
+
 ### Quando a fonte nova não existe, o degrau se desliga
 
 A leitura de `pagamentos_installment` está dentro de um `try/except` largo. Se a `ap_oracle_view`

@@ -1,13 +1,16 @@
 'use strict';
 
-// Shell: abas, badges, tooltip global e boot dos monitores (github.js / prefect.js).
-const TABS = { gh: 'github', pf: 'prefect' };
+// Shell: abas, badges, tooltip global e boot dos monitores (github.js / prefect.js / kpis.js).
+const TABS = { gh: 'github', pf: 'prefect', kp: 'kpis' };
+// Abas que só carregam quando abertas: a de KPIs abre o navegador para o SSO do Snowflake,
+// o que não pode acontecer toda vez que o app abre.
+const LAZY = new Set(['kp']);
 
-window.setBadge = (prefix, n) => {
+window.setBadge = (prefix, n, title) => {
   const b = document.getElementById(`${prefix}-badge`);
   b.textContent = n;
   b.hidden = !n;
-  b.title = `${n} com último run em falha`;
+  b.title = title || `${n} com último run em falha`;
 };
 
 function selectTab(key) {
@@ -15,6 +18,7 @@ function selectTab(key) {
     document.getElementById(`view-${k}`).hidden = k !== key;
     document.querySelector(`.tab[data-tab="${k}"]`).classList.toggle('on', k === key);
   }
+  if (LAZY.has(key)) window.Monitors[TABS[key]].init(); // init() é idempotente
   try { localStorage.setItem('monitor-tab', key); } catch (e) { /* sem storage */ }
 }
 
@@ -49,9 +53,10 @@ function boot() {
   let saved = null;
   try { saved = localStorage.getItem('monitor-tab'); } catch (e) { /* sem storage */ }
   if (saved in TABS) selectTab(saved);
-  // Os dois carregam já na abertura: o badge de cada aba mostra falhas mesmo com a aba fechada.
-  // Cada monitor trata o próprio erro (ex.: Prefect sem VPN) dentro do seu painel.
-  for (const ns of Object.values(TABS)) window.Monitors[ns].init();
+  // GitHub e Prefect carregam já na abertura: o badge de cada aba mostra falhas mesmo com a aba
+  // fechada. Cada monitor trata o próprio erro (ex.: Prefect sem VPN) dentro do seu painel.
+  // As abas LAZY só carregam no primeiro clique (ou aqui, se foi a última aba aberta).
+  for (const [k, ns] of Object.entries(TABS)) if (!LAZY.has(k)) window.Monitors[ns].init();
 }
 
 // pywebview pode disparar 'pywebviewready' antes deste script registrar o listener.

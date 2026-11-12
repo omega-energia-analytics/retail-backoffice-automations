@@ -10,6 +10,7 @@
 <nav class="tabs" role="tablist">
   <button class="tab on" role="tab" data-tab="gh">Deploys <span class="muted">GitHub Actions</span><span class="badge" id="gh-badge" hidden></span></button>
   <button class="tab" role="tab" data-tab="pf">Execuções <span class="muted">Prefect</span><span class="badge" id="pf-badge" hidden></span></button>
+  <button class="tab" role="tab" data-tab="kp">KPIs <span class="muted">CUSD</span><span class="badge" id="kp-badge" hidden></span></button>
 </nav>
 
 <main class="view" id="view-gh">
@@ -141,9 +142,89 @@
 </section>
 </main>
 
+<main class="view" id="view-kp" hidden>
+<header class="top">
+  <div>
+    <h1>KPIs CUSD</h1>
+    <div class="sub">Mesma base do monitor de NFF + log do quickinvoices · usinas GD</div>
+  </div>
+  <div class="status">
+    <span id="kp-status-text">Abra a aba para carregar</span>
+    <button id="kp-btn-refresh" class="btn">Atualizar</button>
+  </div>
+</header>
+
+<div id="kp-error" class="banner warn" hidden></div>
+<div id="kp-avisos" class="banner warn" hidden></div>
+
+<section class="filters">
+  <label>Mês <select id="kp-f-mes"></select></label>
+  <div class="quick">
+    <button class="chip" data-quick="este">Este mês</button>
+    <button class="chip" data-quick="passado">Mês passado</button>
+  </div>
+</section>
+
+<section class="kpi-cards">
+  <div class="kpi-card" id="kp-card1"></div>
+  <div class="kpi-card" id="kp-card2"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Evolução mensal</h2>
+    <div class="legend">Clique num mês para ver o detalhe</div>
+  </div>
+  <table class="grid">
+    <thead><tr>
+      <th>Mês</th>
+      <th class="num" data-tip="% do valor das NFFs CUSD (pela data da NFF) que veio do quickinvoices sem ajuste">KPI 1 · automação</th>
+      <th class="num">NFFs auto · ajust. · manual</th>
+      <th class="num" data-tip="Faturas (pelo mês do vencimento) pagas com atraso + vencidas sem pagamento">KPI 2 · fora do prazo</th>
+      <th class="num">Pagas c/ atraso</th>
+      <th class="num">Vencidas s/ pgto</th>
+      <th class="num">A vencer</th>
+      <th class="num">No prazo</th>
+    </tr></thead>
+    <tbody id="kp-meses"></tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>NFFs fora da automação <span id="kp-count1" class="muted"></span></h2>
+    <div class="legend">Manual = não está em nenhum log · Ajustada = está no log com outro valor</div>
+  </div>
+  <table class="grid">
+    <thead><tr>
+      <th>Usina</th><th>NFF</th><th>Distribuidora</th><th>Data NFF</th>
+      <th class="num">Valor Oracle</th><th class="num">Valor no log</th><th>Origem</th><th>Rodado por</th>
+    </tr></thead>
+    <tbody id="kp-lista1"></tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Faturas fora do prazo <span id="kp-count2" class="muted"></span></h2>
+    <div class="legend">Prazo = vencimento do FattureWeb; sáb/dom vale até o dia útil seguinte · pagamento = o do monitor de NFF</div>
+  </div>
+  <table class="grid">
+    <thead><tr>
+      <th>Usina</th><th>NFF</th><th>Distribuidora</th><th>Vencimento</th><th>Pagamento</th>
+      <th class="num">Dias de atraso</th><th class="num">Valor</th><th>Situação</th>
+    </tr></thead>
+    <tbody id="kp-lista2"></tbody>
+  </table>
+</section>
+
+<div class="foot" id="kp-foot"></div>
+</main>
+
 <div id="tip" class="tip" hidden></div>
 <script src="github.js"></script>
 <script src="prefect.js"></script>
+<script src="kpis.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

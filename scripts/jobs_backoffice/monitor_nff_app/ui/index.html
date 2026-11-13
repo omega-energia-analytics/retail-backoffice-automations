@@ -58,6 +58,14 @@
           <option value="nao-pago">A pagar</option>
           <option value="zerada">Zerada</option>
         </select>
+        <select id="filter-prazo" title="Situação do prazo de pagamento (vencimento da fatura)">
+          <option value="">Prazo: todos</option>
+          <option value="Vencida">Vencida</option>
+          <option value="vence-logo">Vence em ≤2 dias</option>
+          <option value="Em dia">Em dia</option>
+          <option value="Paga no prazo">Paga no prazo</option>
+          <option value="Paga com atraso">Paga com atraso</option>
+        </select>
         <button id="btn-export-faturas" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
       </div>
       <div class="table-wrap"><table id="tbl-faturas"></table></div>

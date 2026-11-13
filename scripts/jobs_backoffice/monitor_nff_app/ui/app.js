@@ -49,10 +49,15 @@ const FATURA_CHIPS = [
   { key: 'chegou',    label: 'Chegou',     pred: f => f.Status === 'Chegou' },
   { key: 'chegou_atr',label: 'Chegou atrasada', pred: f => f.Status === 'Chegou atrasada' },
   { key: 'atrasadas', label: 'Atrasadas',  pred: f => f.Status === 'Atrasada' },
-  { key: 'vence3',    label: 'Vence ≤3d',  pred: f => f.Status === 'Pendente' && f['Dias Restantes'] != null && f['Dias Restantes'] <= 3 },
+  { key: 'vence3',    label: 'Chega ≤3d',  pred: f => f.Status === 'Pendente' && f['Dias Restantes'] != null && f['Dias Restantes'] <= 3 },
   { key: 'pagas',     label: 'Pagas',      pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !!f.Pago },
   { key: 'pagar',     label: 'A pagar',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] && !f['NFF Cancelada'] },
   { key: 'zeradas',   label: 'Zeradas',    pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !!f['Fatura Zerada'] },
+  // Vencimento da fatura (prazo da distribuidora) já passou e ela não foi paga. Não confundir com
+  // 'Atrasadas' (fatura que nem CHEGOU na Data Esperada) nem com 'Chega ≤3d' (também pela chegada).
+  { key: 'vencidas',  label: 'Vencidas',   pred: f => f['Situação Prazo'] === 'Vencida' },
+  // Não paga e vence em até 2 dias (monitor.DIAS_ALERTA_PRAZO) — o selo âmbar da coluna Prazo.
+  { key: 'vence_logo',label: 'Vence ≤2d',  pred: f => !!f['Vence Logo'] },
   { key: 'canceladas',label: 'NFF cancelada', pred: f => (f.Status === 'Chegou' || f.Status === 'Chegou atrasada') && !f.Pago && !f['Fatura Zerada'] && !!f['NFF Cancelada'] }
 ];
 
@@ -218,6 +223,36 @@ function faturaCols() {
     },
     { key: 'UC', label: 'UC', render: v => copyCell(v) },
     { key: 'Status', label: 'Status', render: v => `<span class="status status-${(v||'').toLowerCase().replace(/\s+/g,'-')}">${v}</span>` },
+    // Vencimento impresso na fatura (FattureWeb). Vermelho só quando JÁ passou e não foi paga;
+    // pago ou dentro do prazo fica na cor normal. Vencimento em sáb/dom vale até a segunda.
+    { key: 'Vencimento', label: 'Vencimento',
+      sortValue: row => dataISO(row.Vencimento),
+      render: (v, row) => {
+        if (!v) return '—';
+        const dica = row['Prazo Pagamento'] && row['Prazo Pagamento'] !== v
+          ? ` title="Vencimento em fim de semana: vale até ${row['Prazo Pagamento']}"` : '';
+        return row['Situação Prazo'] === 'Vencida'
+          ? `<span class="venc-vencida"${dica}>${v}</span>` : `<span${dica}>${v}</span>`;
+      }
+    },
+    { key: 'Situação Prazo', label: 'Prazo',
+      sortValue: row => SITUACAO_ORDEM[row['Situação Prazo']] ?? 9,
+      render: (v, row) => {
+        if (!v) return `<span class="status status-neutro">—</span>`;
+        const d = row['Dias Prazo'];
+        const dias = n => `${Math.abs(n)} dia${Math.abs(n) === 1 ? '' : 's'}`;
+        const dica = {
+          'Vencida': d == null ? 'Prazo vencido e sem pagamento' : `Vencida há ${dias(d)} sem pagamento`,
+          'Em dia': d == null ? 'Dentro do prazo' : (d === 0 ? 'Vence hoje' : `Vence em ${dias(d)}`),
+          'Paga no prazo': d == null ? 'Paga dentro do prazo' : `Paga ${dias(d)} antes do prazo`,
+          'Paga com atraso': d == null ? 'Paga depois do prazo' : `Paga ${dias(d)} depois do prazo`,
+          'Paga': 'Paga, mas sem data de pagamento para comparar com o prazo',
+        }[v] || '';
+        // "Em dia" que vence em até 2 dias: âmbar, pra dar tempo de pagar antes de virar vermelho
+        const cls = row['Vence Logo'] ? 'nao-pago' : v.toLowerCase().replace(/\s+/g, '-');
+        return `<span class="status status-${cls}" title="${dica}">${v}</span>`;
+      }
+    },
     { key: 'Pago', label: 'Pago',
       // valor bruto é sempre false p/ "A pagar", "Zerada" e "—" (só distingue quem chegou);
       // o texto exibido é que separa os quatro estados, então o sort usa essa mesma régua.
@@ -258,8 +293,14 @@ function faturaCols() {
   ];
 }
 
+const brl = v => (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// 'dd/mm/aaaa' -> 'aaaa-mm-dd' pra ordenar como data (a string BR ordena por dia, não por data)
+const dataISO = s => s ? s.split('/').reverse().join('-') : null;
+// Vencida primeiro: é o que o usuário quer ver ao ordenar por Prazo
+const SITUACAO_ORDEM = { 'Vencida': 0, 'Em dia': 1, 'Paga com atraso': 2, 'Paga no prazo': 3, 'Paga': 4 };
+
 function faturaRowClass(row) {
-  if (row.Status === 'Atrasada') return 'row-danger';
+  if (row.Status === 'Atrasada' || row['Situação Prazo'] === 'Vencida') return 'row-danger';
   if (row.Status === 'Chegou atrasada') return 'row-warn';
   if (row.Status === 'Pendente' && row['Dias Restantes'] != null && row['Dias Restantes'] <= 3) return 'row-warn';
   return '';
@@ -600,16 +641,19 @@ async function loadDashboard() {
     { label: 'Chegou', value: resumo.chegou, cls: 'ok', chip: 'chegou' },
     { label: 'Chegou atrasada', value: resumo.chegou_atrasada, cls: 'warn', chip: 'chegou_atr' },
     { label: 'Atrasadas', value: resumo.atrasadas, cls: 'danger', chip: 'atrasadas' },
-    { label: 'Próx. vencimento (≤3d)', value: resumo.proximas_vencimento, cls: 'warn', chip: 'vence3' },
+    { label: 'Chega em ≤3d (fatura pendente)', value: resumo.proximas_vencimento, cls: 'warn', chip: 'vence3' },
     { label: 'Pagas', value: resumo.pagas, cls: 'ok', chip: 'pagas' },
     { label: 'A pagar', value: resumo.nao_pagas, cls: 'warn', chip: 'pagar' },
+    { label: 'Vencidas (prazo de pagar)', value: resumo.vencidas, sub: brl(resumo.vencidas_valor), cls: 'danger', chip: 'vencidas' },
+    { label: 'Vence em ≤2d', value: resumo.vence_logo, sub: brl(resumo.vence_logo_valor), cls: 'warn', chip: 'vence_logo' },
     { label: 'Zeradas', value: resumo.zeradas, cls: '', chip: 'zeradas' },
     // { label: 'NFFs no banco', value: resumo.total_nffs_db, cls: '' }
   ];
   const el = document.getElementById('cards-dashboard');
   el.innerHTML = cards.map(c =>
     `<div class="card ${c.cls}" data-chip="${c.chip}" title="Ver estas faturas na lista">` +
-    `<div class="label">${c.label}</div><div class="value">${c.value}</div></div>`
+    `<div class="label">${c.label}</div><div class="value">${c.value}</div>` +
+    (c.sub ? `<div class="sub">${c.sub}</div>` : '') + `</div>`
   ).join('');
   el.querySelectorAll('.card').forEach(card => {
     card.onclick = () => {
@@ -619,6 +663,7 @@ async function loadDashboard() {
       document.getElementById('filter-text').value = '';
       document.getElementById('filter-status').value = '';
       document.getElementById('filter-pago').value = '';
+      document.getElementById('filter-prazo').value = '';
       switchView('faturas');
     };
   });
@@ -654,6 +699,7 @@ function applyFilters() {
   const txt = document.getElementById('filter-text').value.toLowerCase();
   const status = document.getElementById('filter-status').value;
   const pago = document.getElementById('filter-pago').value;
+  const prazo = document.getElementById('filter-prazo').value;
   const chip = FATURA_CHIPS.find(c => c.key === state.quickFilter) || FATURA_CHIPS[0];
 
   const filtered = state.faturas.filter(f => {
@@ -662,6 +708,7 @@ function applyFilters() {
     if (pago === 'pago' && !f.Pago) return false;
     if (pago === 'nao-pago' && (f.Pago || f['Fatura Zerada'] || f['NFF Cancelada'])) return false;
     if (pago === 'zerada' && (f.Pago || !f['Fatura Zerada'])) return false;
+    if (prazo === 'vence-logo' ? !f['Vence Logo'] : (prazo && f['Situação Prazo'] !== prazo)) return false;
     if (txt) {
       const blob = `${f.Projeto} ${f.ACRONIMO} ${f.Distribuidora} ${f.NFF ?? ''} ${f.UC ?? ''}`.toLowerCase();
       if (!blob.includes(txt)) return false;
@@ -739,6 +786,12 @@ function exportarFaturas() {
     'UC': f.UC,
     'Pago': f.Pago ? 'Sim' : (f['Fatura Zerada'] ? 'Zerada' : (f['NFF Cancelada'] ? 'Cancelada' : 'Não')),
     'Data Pagamento': f['Data Pagamento'],
+    // vencimento impresso na fatura e o prazo efetivo (fim de semana vale até segunda)
+    'Vencimento': f.Vencimento,
+    'Prazo Pagamento': f['Prazo Pagamento'],
+    'Situação Prazo': f['Situação Prazo'],
+    'Dias Prazo': f['Dias Prazo'],
+    'Valor Fatura': f['Valor Fatura'],
     // rastro de qual fonte confirmou o pagamento — ORACLE_INSTALLMENT = data aproximada
     'Fonte Pagamento': f['Fonte Pagamento'],
     // faturas que chegaram no mesmo mês e não são a exibida (o painel é 1 linha/projeto)
@@ -866,6 +919,7 @@ function init() {
     document.getElementById('filter-text').oninput = applyFilters;
     document.getElementById('filter-status').onchange = applyFilters;
     document.getElementById('filter-pago').onchange = applyFilters;
+    document.getElementById('filter-prazo').onchange = applyFilters;
     document.querySelectorAll('.sel-mes').forEach(el => { el.onchange = onMesChange; });
     document.getElementById('filter-parceiros').oninput = applyParceiroFilters;
     document.getElementById('btn-export-parceiros').onclick = exportarParceiros;

@@ -307,6 +307,11 @@ class Api:
             canceladas = sum(1 for x in ja_chegou if not x.get('Pago') and not x.get('Fatura Zerada')
                              and x.get('NFF Cancelada'))
             nao_pagas = len(ja_chegou) - pagas - zeradas - canceladas
+            # prazo de pagamento (vencimento da fatura) já passou e não foi paga — mesma regra da coluna Prazo
+            vencidas = [x for x in f if x.get('Situação Prazo') == 'Vencida']
+            # a vencer em até DIAS_ALERTA_PRAZO dias (ver monitor._situacao_prazo)
+            vence_logo = [x for x in f if x.get('Vence Logo')]
+            soma = lambda xs: round(sum(x['Valor Fatura'] for x in xs if x.get('Valor Fatura') is not None), 2)
             total_nffs = db.total_registros()
             return {"ok": True, "data": {
                 "total_projetos": total,
@@ -318,6 +323,10 @@ class Api:
                 "proximas_vencimento": proximas,
                 "pagas": pagas,
                 "nao_pagas": nao_pagas,
+                "vencidas": len(vencidas),
+                "vencidas_valor": soma(vencidas),
+                "vence_logo": len(vence_logo),
+                "vence_logo_valor": soma(vence_logo),
                 "zeradas": zeradas,
                 "canceladas": canceladas,
                 "total_nffs_db": total_nffs

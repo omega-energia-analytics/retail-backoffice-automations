@@ -3,6 +3,7 @@ import sys
 import warnings
 import requests
 import yaml
+import numpy as np
 import pandas as pd
 import snowflake.connector as snowflake
 from datetime import datetime
@@ -409,6 +410,51 @@ def _status(row, hoje_date):
     if pd.notna(row['Data Chegada']):
         return 'Chegou' if row['Data Chegada'].date() <= row['Data Esperada'].date() else 'Chegou atrasada'
     return 'Pendente' if row['Data Esperada'].date() >= hoje_date else 'Atrasada'
+
+
+# Fatura não paga que vence em até N dias (inclui hoje) entra como "Vence logo": dá tempo de agir.
+# A UI (chip/card 'Vence ≤2d' em app.js) usa o mesmo número no rótulo — mexeu aqui, mexa lá.
+DIAS_ALERTA_PRAZO = 2
+
+
+def _prazo_util(venc):
+    """Vencimento em sábado/domingo vale até a segunda-feira seguinte (feriado não é tratado).
+
+    Mesma regra do KPI 2 da aba KPIs do monitor de observability (kpis.prazo_util): o painel
+    e o KPI têm que julgar "vencida" do mesmo jeito. Recebe e devolve Series de datetime."""
+    wd = venc.dt.weekday
+    return venc + pd.to_timedelta(((7 - wd) % 7).where(wd >= 5, 0).fillna(0), unit='D')
+
+
+def _situacao_prazo(df, hoje_date):
+    """Vencimento impresso na fatura (FattureWeb) x pagamento -> (vencimento, prazo, situação, folga, vence logo).
+
+    situação: 'Vencida' (não paga e o prazo passou), 'Em dia' (não paga, prazo ainda vale —
+    inclusive vence hoje), 'Paga no prazo', 'Paga com atraso', 'Paga' (paga pela parcela do
+    Oracle sem data nenhuma: não dá para julgar) ou None (sem vencimento no FattureWeb, fatura
+    zerada ou NFF cancelada: não há prazo a cobrar). folga = dias entre o prazo e a data de
+    pagamento (ou hoje, se não paga): positivo = sobrou prazo, negativo = dias de atraso.
+    vence logo = 'Em dia' com folga <= DIAS_ALERTA_PRAZO.
+    """
+    venc = pd.to_datetime(df['VENCIMENTO_FW'], errors='coerce').dt.normalize()
+    prazo = _prazo_util(venc)
+    hoje = pd.Timestamp(hoje_date)
+    pago = df['Pago'].astype(bool)
+    data_pg = df['Data Pagamento Efetiva'].dt.normalize()
+    sem_cobranca = prazo.isna() | df['Fatura Zerada'] | df['NFF Cancelada']
+    situacao = pd.Series(np.select(
+        [sem_cobranca,
+         pago & data_pg.notna() & (data_pg <= prazo),
+         pago & data_pg.notna(),
+         pago,
+         prazo < hoje],
+        ['', 'Paga no prazo', 'Paga com atraso', 'Paga', 'Vencida'],
+        default='Em dia'), index=df.index)
+    ref = data_pg.where(pago & data_pg.notna(), hoje)
+    folga = (prazo - ref).dt.days.astype('Int64').where(~situacao.isin(['', 'Paga']))
+    fmt = lambda c: c.dt.strftime('%d/%m/%Y').where(c.notna(), None)
+    vence_logo = (situacao == 'Em dia') & (folga.fillna(DIAS_ALERTA_PRAZO + 1) <= DIAS_ALERTA_PRAZO)
+    return fmt(venc), fmt(prazo), situacao.where(situacao != '', None), folga, vence_logo
 
 
 def _dias_para_vencer(row, hoje_date):
@@ -1012,7 +1058,7 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # ap_oracle_view ainda não expõe o status (degrau desligado em carregar_base) ou em
     # fixtures de teste montadas à mão — garantir a presença mantém o resto do fluxo igual.
     for c in ('STATUS_INSTALLMENT', 'DATA_STATUS_INSTALLMENT', 'FATURA_ID', 'TOTAL_DA_FATURA',
-              'FATURA_VALOR', 'STATUS_NFF'):
+              'FATURA_VALOR', 'STATUS_NFF', 'VENCIMENTO_FW'):
         if c not in df_mes.columns:
             df_mes[c] = None
 
@@ -1056,7 +1102,7 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
         df_recent[['ACRONIMO','NOTA_FISCAL','DATA_REFERENCIA','DATA_CHEGADA','DATA_DE_PAGAMENTO',
                    'PAGAMENTO','UC','STATUS_INSTALLMENT','DATA_STATUS_INSTALLMENT',
                    'MES_REF_FW','_NFFS_MES','FATURA_ID','TOTAL_DA_FATURA','FATURA_VALOR',
-                   'STATUS_NFF']],
+                   'STATUS_NFF', 'VENCIMENTO_FW']],
         on='ACRONIMO',
         how='left'
     )
@@ -1126,13 +1172,23 @@ def montar_mes(df_merged, df_projetos, ano=None, mes=None, hoje=None):
     # ela só é exibida quando não existe versão válida da mesma competência. Mesma lógica da
     # 'Fatura Zerada': coluna própria, 'Pago' continua booleano, e é a UI que exibe "Cancelada".
     df['NFF Cancelada'] = df['STATUS_NFF'].eq('Cancelada') & ~df['Pago']
+    # [add 13/11/2026] Vencimento da fatura (prazo da distribuidora, do FattureWeb) e a situação
+    # contra o pagamento. Antes o painel só tinha 'Data Esperada' (quando a fatura deveria CHEGAR),
+    # então uma fatura chegada e não paga não mostrava se já tinha passado do prazo de pagar.
+    # Colunas novas: nada do que já existe muda.
+    (df['Vencimento'], df['Prazo Pagamento'], df['Situação Prazo'],
+     df['Dias Prazo'], df['Vence Logo']) = _situacao_prazo(df, hoje_date)
+    # [add 13/11/2026] Valor da cobrança, pra somar vencidas em R$: Total Fatura do FattureWeb e,
+    # sem ele, o valor que o Oracle tem para a nota.
+    df['Valor Fatura'] = total_fw.where(total_fw.notna(), df['Valor Oracle'])
     # Colunas novas entram no FIM: consumidores existentes leem por nome, então a ordem antiga
     # segue intacta ('Fonte Pagamento' entrou pela mesma razão).
     cols = ['Projeto','ACRONIMO','Distribuidora','Dia','Forma Recebimento',
              'Data Esperada','Data Chegada','Status','Dias Restantes',
              'NFF','UC','Pago','Data Pagamento','Fonte Pagamento',
              'Competência','Faturas no Mês','NFF Adicionais','Fatura ID','Total Fatura',
-             'Valor Oracle','Divergência Valor','Fatura Zerada','NFF Cancelada']
+             'Valor Oracle','Divergência Valor','Fatura Zerada','NFF Cancelada',
+             'Vencimento','Prazo Pagamento','Situação Prazo','Dias Prazo','Vence Logo','Valor Fatura']
     df_out = df[cols]
 
     # sanitiza NaN/NaT -> None pra JSON válido

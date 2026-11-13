@@ -1379,3 +1379,113 @@ def test_prep_pag_sem_status_no_fallback_nao_quebra():
                        'DATA_DE_PAGAMENTO': [None], 'DATA_INVOICE': [None]})
     out = monitor._prep_pag(df)
     assert 'STATUS_NFF' in out.columns and out['STATUS_NFF'].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# Vencimento da fatura x pagamento (colunas Vencimento / Prazo Pagamento / Situação Prazo)
+# ---------------------------------------------------------------------------
+HOJE_SEX = datetime(2026, 11, 13)  # sexta-feira
+
+
+def _prazo(linhas, hoje=HOJE_SEX):
+    """linhas: (acronimo, vencimento, pagamento|None, total). Todas chegaram em 05/11/2026."""
+    projetos = _df_projetos([(f'Usina {a}', a, 'CPFL', 5, 'FW') for a, *_ in linhas])
+    merged = pd.DataFrame([{
+        'ACRONIMO': a, 'NOTA_FISCAL': f'NF-{a}', 'DATA_REFERENCIA': '2026-11-05',
+        'DATA_CHEGADA': '2026-11-05', 'DATA_DE_PAGAMENTO': pg, 'PAGAMENTO': None, 'UC': '1',
+        'VENCIMENTO_FW': venc, 'TOTAL_DA_FATURA': total,
+    } for a, venc, pg, total in linhas])
+    for c in ('DATA_REFERENCIA', 'DATA_CHEGADA', 'DATA_DE_PAGAMENTO', 'PAGAMENTO', 'VENCIMENTO_FW'):
+        merged[c] = pd.to_datetime(merged[c], errors='coerce')
+    return _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 11, hoje=hoje))
+
+
+def test_prazo_nao_paga_passou_do_vencimento_fica_vencida():
+    r = _prazo([('A', '2026-11-12', None, '100,00')])['A']   # quinta, hoje é sexta
+    assert r['Vencimento'] == '12/11/2026'
+    assert r['Situação Prazo'] == 'Vencida'
+    assert r['Dias Prazo'] == -1
+
+
+def test_prazo_vence_hoje_ainda_esta_em_dia():
+    r = _prazo([('A', '2026-11-13', None, '100,00')])['A']
+    assert r['Situação Prazo'] == 'Em dia' and r['Dias Prazo'] == 0
+
+
+def test_prazo_vencimento_no_fim_de_semana_vale_ate_segunda():
+    # sábado 14/11: prazo segunda 16/11, então hoje (sexta) está em dia
+    sab = _prazo([('A', '2026-11-14', None, '100,00')])['A']
+    assert sab['Prazo Pagamento'] == '16/11/2026'
+    assert sab['Situação Prazo'] == 'Em dia' and sab['Dias Prazo'] == 3
+    # sábado 07/11: prazo segunda 09/11, já passou
+    velha = _prazo([('B', '2026-11-07', None, '100,00')])['B']
+    assert velha['Prazo Pagamento'] == '09/11/2026' and velha['Situação Prazo'] == 'Vencida'
+    assert velha['Dias Prazo'] == -4
+
+
+def test_prazo_paga_compara_a_data_de_pagamento_com_o_prazo():
+    r = _prazo([
+        ('A', '2026-11-10', '2026-11-10', '100,00'),   # no dia
+        ('B', '2026-11-10', '2026-11-12', '100,00'),   # 2 dias depois
+    ])
+    assert r['A']['Situação Prazo'] == 'Paga no prazo' and r['A']['Dias Prazo'] == 0
+    assert r['B']['Situação Prazo'] == 'Paga com atraso' and r['B']['Dias Prazo'] == -2
+
+
+def test_prazo_sem_vencimento_ou_zerada_nao_tem_situacao():
+    r = _prazo([
+        ('A', None, None, '100,00'),                    # sem vencimento no FattureWeb
+        ('B', '2026-11-01', None, '0,00'),              # zerada: nada a pagar
+    ])
+    for a in ('A', 'B'):
+        assert r[a]['Situação Prazo'] is None and r[a]['Dias Prazo'] is None
+    assert r['A']['Vencimento'] is None
+    assert r['B']['Vencimento'] == '01/11/2026'
+
+
+def test_prazo_fixture_sem_coluna_de_vencimento_nao_quebra():
+    # fixtures antigas não têm VENCIMENTO_FW: as colunas novas saem vazias, o resto segue igual
+    projetos = _df_projetos([('Usina A', 'A-01', 'CPFL', 10, 'FW')])
+    merged = _df_merged([{'ACRONIMO': 'A-01', 'NOTA_FISCAL': '1', 'DATA_REFERENCIA': '2026-11-05',
+                          'DATA_DE_PAGAMENTO': None, 'PAGAMENTO': None, 'UC': '1'}])
+    r = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 11, hoje=HOJE_SEX))['A-01']
+    assert r['Vencimento'] is None and r['Situação Prazo'] is None
+
+
+def test_prazo_vence_logo_so_para_nao_paga_a_ate_2_dias():
+    # hoje = sexta 13/11: vence hoje (0d) e sábado 14/11 -> prazo segunda 16/11 (3d)
+    r = _prazo([
+        ('A', '2026-11-13', None, '100,00'),   # hoje          -> vence logo
+        ('B', '2026-11-15', None, '100,00'),   # dom -> seg 16 -> 3 dias, ainda tranquilo
+        ('C', '2026-11-20', None, '100,00'),   # 7 dias
+        ('D', '2026-11-13', '2026-11-12', '100,00'),   # já paga: não alerta
+        ('E', '2026-11-12', None, '100,00'),   # vencida: não é "vence logo"
+        ('F', None, None, '100,00'),           # sem vencimento
+    ])
+    assert [r[a]['Vence Logo'] for a in 'ABCDEF'] == [True, False, False, False, False, False]
+    assert monitor.DIAS_ALERTA_PRAZO == 2
+
+
+def test_prazo_vence_logo_inclui_amanha_e_depois():
+    r = _prazo([('A', '2026-11-14', None, '1,00'), ('B', '2026-11-17', None, '1,00')])
+    # 14/11 é sábado: o prazo vira segunda 16/11 (3 dias). 17/11 é terça (4 dias).
+    assert r['A']['Dias Prazo'] == 3 and not r['A']['Vence Logo']
+    r = _prazo([('A', '2026-11-13', None, '1,00')], hoje=datetime(2026, 11, 11))
+    assert r['A']['Dias Prazo'] == 2 and r['A']['Vence Logo']
+
+
+def test_valor_fatura_usa_total_do_fw_e_cai_no_oracle():
+    projetos = _df_projetos([('Usina A', 'A-01', 'CPFL', 5, 'FW'), ('Usina B', 'B-01', 'CPFL', 5, 'FW')])
+    merged = pd.DataFrame([
+        {'ACRONIMO': 'A-01', 'NOTA_FISCAL': '1', 'DATA_REFERENCIA': '2026-11-05', 'DATA_CHEGADA': '2026-11-05',
+         'DATA_DE_PAGAMENTO': None, 'PAGAMENTO': None, 'UC': '1', 'VENCIMENTO_FW': '2026-11-12',
+         'TOTAL_DA_FATURA': '1.234,56', 'FATURA_VALOR': 999.0},
+        {'ACRONIMO': 'B-01', 'NOTA_FISCAL': '2', 'DATA_REFERENCIA': '2026-11-05', 'DATA_CHEGADA': '2026-11-05',
+         'DATA_DE_PAGAMENTO': None, 'PAGAMENTO': None, 'UC': '1', 'VENCIMENTO_FW': '2026-11-12',
+         'TOTAL_DA_FATURA': None, 'FATURA_VALOR': 500.0},
+    ])
+    for c in ('DATA_REFERENCIA', 'DATA_CHEGADA', 'DATA_DE_PAGAMENTO', 'PAGAMENTO', 'VENCIMENTO_FW'):
+        merged[c] = pd.to_datetime(merged[c], errors='coerce')
+    r = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 11, hoje=HOJE_SEX))
+    assert r['A-01']['Valor Fatura'] == 1234.56
+    assert r['B-01']['Valor Fatura'] == 500.0

@@ -81,6 +81,7 @@ h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); font-weight: 600
 .card:hover { background: var(--panel-2); border-color: var(--accent); }
 .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
 .card .value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+.card .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .card.ok .value { color: var(--ok); }
 .card.warn .value { color: var(--warn); }
 .card.danger .value { color: var(--danger); }
@@ -107,6 +108,12 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
 .status.status-atrasada { background: rgba(239,68,68,0.15); color: var(--danger); }
 .status.status-pago { background: rgba(16,185,129,0.15); color: var(--ok); }
 .status.status-nao-pago { background: rgba(245,158,11,0.15); color: var(--warn); }
+.status.status-vencida { background: rgba(239,68,68,0.15); color: var(--danger); }
+.status.status-em-dia { background: rgba(16,185,129,0.15); color: var(--ok); }
+.status.status-paga-no-prazo { background: transparent; color: var(--ok); padding-left: 0; }
+.status.status-paga-com-atraso { background: rgba(245,158,11,0.15); color: var(--warn); }
+.status.status-paga { background: transparent; color: var(--muted); padding-left: 0; }
+.venc-vencida { color: var(--danger); font-weight: 600; }
 .status.status-neutro { background: transparent; color: var(--muted); padding-left: 0; }
 .status.status-zerada { background: rgba(168,168,168,0.15); color: var(--muted); }
 

@@ -4,7 +4,7 @@
 // Aba KPIs CUSD. Os dados vêm inteiros de uma chamada (todos os meses); trocar de mês é só
 // re-render. A regra de negócio fica em kpis.py — aqui é só exibição.
 
-const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const { monthStr: mesStr, monthLabel: mesLabel } = window.MonthPicker;
 const ORIGEM = {
   automacao: { label: 'Automação', g: 'ok', icon: '✓' },
   ajustada: { label: 'Ajustada', g: 'warn', icon: '!' },
@@ -19,7 +19,7 @@ const STATUS = {
   cancelada: { label: 'NFF cancelada no Oracle', g: 'cancel', icon: '⊘' },
 };
 
-const state = { started: false, data: null, mes: null, seq: 0 };
+const state = { started: false, data: null, mes: null, seq: 0, picker: null };
 const $ = id => document.getElementById('kp-' + id);
 const api = () => window.pywebview.api.kpis;
 
@@ -30,8 +30,6 @@ const brl = v => v == null ? '–' : v.toLocaleString('pt-BR', { style: 'currenc
 const mi = v => v == null ? '–' : `R$ ${(v / 1e6).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} mi`;
 const pct = v => v == null ? '–' : `${v.toFixed(1).replace('.', ',')}%`;
 const data = iso => iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '–';
-const mesLabel = m => `${MESES[Number(m.slice(5)) - 1]}/${m.slice(2, 4)}`;
-const mesStr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const tag = (txt, tip) => `<span class="tag"${tip ? ` data-tip="${esc(tip)}"` : ''}>${esc(txt)}</span>`;
 const st = s => `<span class="st"><span class="ic ${s.g}" aria-hidden="true">${s.icon}</span>${esc(s.label)}</span>`;
 const sinal = (v, casas = 0) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(casas).replace('.', ',')}`;
@@ -172,21 +170,6 @@ function render() {
   renderLista1();
   renderLista2();
   renderFoot();
-  document.querySelectorAll('#view-kp [data-quick]').forEach(b => {
-    b.classList.toggle('on', b.dataset.mes === state.mes);
-  });
-}
-
-// ---------- dados ----------
-function preencherMeses() {
-  const sel = $('f-mes');
-  sel.innerHTML = [...state.data.meses].reverse().map(m => `<option value="${m}">${mesLabel(m)}</option>`).join('');
-  if (!state.mes || !state.data.meses.includes(state.mes)) state.mes = state.data.meses[state.data.meses.length - 1];
-  sel.value = state.mes;
-  const hoje = new Date();
-  const passado = mesStr(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1));
-  document.querySelector('#view-kp [data-quick="este"]').dataset.mes = mesStr(hoje);
-  document.querySelector('#view-kp [data-quick="passado"]').dataset.mes = passado;
 }
 
 async function load(force) {
@@ -213,7 +196,8 @@ async function load(force) {
   $('avisos').innerHTML = res.avisos.map(a => `<span class="ic warn" aria-hidden="true">!</span><span class="grow">${esc(a)}</span>`).join('');
 
   state.data = res;
-  preencherMeses();
+  state.picker.setMonths(res.meses);
+  state.mes = state.picker.value;
   const n = res.kpi2.n_vencidas_agora;
   window.setBadge('kp', n, `${n} fatura(s) CUSD vencida(s) sem pagamento`);
   $('status-text').textContent = `Atualizado ${fmtT.format(new Date(res.fetched_at))}`;
@@ -223,19 +207,9 @@ async function load(force) {
 // ---------- eventos ----------
 function bind() {
   $('btn-refresh').addEventListener('click', () => load(true));
-  $('f-mes').addEventListener('change', e => { state.mes = e.target.value; render(); });
-  document.querySelectorAll('#view-kp [data-quick]').forEach(b => b.addEventListener('click', () => {
-    if (!state.data || !state.data.meses.includes(b.dataset.mes)) return;
-    state.mes = b.dataset.mes;
-    $('f-mes').value = state.mes;
-    render();
-  }));
   $('meses').addEventListener('click', e => {
     const tr = e.target.closest('tr.row');
-    if (!tr) return;
-    state.mes = tr.dataset.mes;
-    $('f-mes').value = state.mes;
-    render();
+    if (tr) state.picker.select(tr.dataset.mes);
   });
 }
 
@@ -243,6 +217,7 @@ function bind() {
 function init() {
   if (state.started) return;
   state.started = true;
+  state.picker = window.MonthPicker.mount('kp', m => { state.mes = m; render(); });
   bind();
   load(false);
 }

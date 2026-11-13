@@ -27,6 +27,7 @@ WORKFLOWS = {
     "prefect-stg.yml": ("Flows Python", "stg", "Run verde = flows registrados no Prefect (stg)."),
     "prefect-prod.yml": ("Flows Python", "prod", "Run verde = flows registrados no Prefect (prod)."),
 }
+BRT = timezone(timedelta(hours=-3))
 FAIL = {"failure", "timed_out", "startup_failure"}
 ACTIVE = {"in_progress", "queued", "waiting", "pending", "requested"}
 GH_PATHS = (r"C:\Program Files\GitHub CLI\gh.exe", r"C:\Program Files (x86)\GitHub CLI\gh.exe")
@@ -107,15 +108,20 @@ class Api:
             ],
         }
 
-    def get_runs(self, days):
-        """Runs dos últimos `days` dias, de todos os workflows de deploy."""
+    def get_runs(self, month):
+        """Runs do mês `month` (AAAA-MM, horário de Brasília), de todos os workflows de deploy."""
         try:
-            days = max(1, min(int(days), 365))
-            since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-            now = datetime.now(timezone.utc)
+            first = datetime.strptime(month, "%Y-%m").replace(tzinfo=BRT)
+        except (TypeError, ValueError):
+            return {"error": f"Mês inválido: {month!r} (use AAAA-MM)."}
+        after = (first + timedelta(days=32)).replace(day=1)
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        window = f"{first.astimezone(timezone.utc).strftime(fmt)}..{(after - timedelta(seconds=1)).astimezone(timezone.utc).strftime(fmt)}"
+        now = datetime.now(timezone.utc)
+        try:
             self._auth()
             with ThreadPoolExecutor(max_workers=len(WORKFLOWS)) as pool:
-                chunks = list(pool.map(lambda f: self._workflow_runs(f, since, now), WORKFLOWS))
+                chunks = list(pool.map(lambda f: self._workflow_runs(f, window, now), WORKFLOWS))
         except (urllib.error.URLError, TimeoutError, OSError, PermissionError) as exc:
             return {"error": self._explain(exc)}
         runs = [r for c in chunks for r in c[0]]
@@ -142,12 +148,12 @@ class Api:
         return {"jobs": jobs, "log": log}
 
     # ---------- internos ----------
-    def _workflow_runs(self, file, since, now):
+    def _workflow_runs(self, file, window, now):
         kind, env, _ = WORKFLOWS[file]
         out, truncated = [], False
         for page in range(1, MAX_PAGES + 1):
             data = self._get(f"/repos/{REPO}/actions/workflows/{file}/runs",
-                             per_page=100, page=page, created=f">={since}")
+                             per_page=100, page=page, created=window)
             batch = data.get("workflow_runs", [])
             for r in batch:
                 start = _parse_dt(r.get("run_started_at") or r["created_at"])

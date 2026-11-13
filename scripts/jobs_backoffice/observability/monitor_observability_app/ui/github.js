@@ -22,8 +22,10 @@ const group = s => OK.has(s) ? 'ok' : FAIL.has(s) ? 'fail' : WARN.has(s) ? 'warn
 const label = s => PT[s] || s;
 const HIST = 30;
 
+const MESES_HIST = 12; // quantos meses (contando o atual) aparecem no seletor
+
 const state = {
-  cfg: null, started: false, runs: [], seq: 0, timer: null,
+  cfg: null, started: false, runs: [], seq: 0, timer: null, picker: null,
   sort: { key: null, dir: 1 },
   open: new Set(), onlyFails: new Set(),
   why: new Map(),                 // run id -> resposta de get_failure ('...' enquanto carrega)
@@ -247,12 +249,13 @@ async function loadWhy(id) {
 // ---------- carga ----------
 async function load() {
   const seq = ++state.seq;
-  const days = $('f-dias').value;
+  state.picker.setMonths(meses()); // vira o mês com o app aberto: "Este mês" passa a existir
+  const mes = state.picker.value;
   $('btn-refresh').disabled = true;
   $('status-text').textContent = 'Buscando…';
   let res;
   try {
-    res = await api().get_runs(days);
+    res = await api().get_runs(mes);
   } catch (e) {
     res = { error: String(e) };
   }
@@ -266,14 +269,14 @@ async function load() {
     return;
   }
   if (res.truncated.length) {
-    $('error').innerHTML = `${icon('warn')}<span class="grow">Período grande: ${res.truncated.length} workflow(s) com mais runs do que o limite lido (${res.truncated.join(', ')}). Reduza o período para ver tudo.</span>`;
+    $('error').innerHTML = `${icon('warn')}<span class="grow">Período grande: ${res.truncated.length} workflow(s) com mais runs do que o limite lido (${res.truncated.join(', ')}). Alguns runs do mês ficaram de fora.</span>`;
     $('error').hidden = false;
   } else {
     $('error').hidden = true;
   }
 
   state.runs = res.runs.map(r => ({ ...r, t: Date.parse(r.when) }));
-  if (days !== state.periodKey) { state.periodKey = days; state.seenFails = null; state.newFails.clear(); }
+  if (mes !== state.periodKey) { state.periodKey = mes; state.seenFails = null; state.newFails.clear(); }
   const failIds = new Set(state.runs.filter(r => FAIL.has(r.state)).map(r => r.id));
   if (state.seenFails) for (const id of failIds) if (!state.seenFails.has(id)) state.newFails.add(id);
   state.seenFails = failIds;
@@ -289,10 +292,14 @@ function schedule() {
   if (min) state.timer = setInterval(load, min * 60000);
 }
 
+function meses() {
+  const d = new Date();
+  return window.MonthPicker.range(window.MonthPicker.monthStr(new Date(d.getFullYear(), d.getMonth() - (MESES_HIST - 1), 1)));
+}
+
 // ---------- eventos ----------
 function bind() {
   $('btn-refresh').addEventListener('click', load);
-  $('f-dias').addEventListener('change', load);
   $('f-busca').addEventListener('input', render);
   for (const id of ['f-env', 'f-kind', 'f-ultimo', 'f-comfalha']) $(id).addEventListener('change', render);
   $('f-auto').addEventListener('change', () => { schedule(); load(); });
@@ -332,6 +339,8 @@ async function init() {
   const kinds = [...new Set(state.cfg.workflows.map(w => w.kind))];
   $('f-kind').innerHTML = '<option value="">Todos</option>' + kinds.map(k => `<option>${esc(k)}</option>`).join('');
   renderLegend();
+  state.picker = window.MonthPicker.mount('gh', load);
+  state.picker.setMonths(meses());
   bind();
   schedule();
   load();

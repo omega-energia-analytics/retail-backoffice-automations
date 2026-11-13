@@ -16,10 +16,9 @@ const GROUPS = {
 };
 const group = s => OK.has(s) ? 'ok' : FAIL.has(s) ? 'fail' : WARN.has(s) ? 'warn' : CANCEL.has(s) ? 'cancel' : 'active';
 const HIST = 30; // barras no histórico de cada deployment
-const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
 const state = {
-  cfg: null, started: false, runs: [], seq: 0, timer: null,
+  cfg: null, started: false, runs: [], seq: 0, timer: null, picker: null,
   sort: { key: null, dir: 1 },   // key null = padrão: último run em falha primeiro, depois nome
   open: new Set(), onlyFails: new Set(),
   periodKey: null, seenFails: null, newFails: new Set(),
@@ -44,8 +43,6 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const icon = g => `<span class="ic ${g}" aria-hidden="true">${g ? GROUPS[g].icon : ''}</span>`;
 const stateCell = st => `<span class="st">${icon(group(st))}${esc(st)}</span>`;
 const runUrl = id => `${state.cfg.ui_url}/runs/flow-run/${id}`;
-const monthStr = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-const monthLabel = m => `${MESES[Number(m.slice(5)) - 1]}/${m.slice(2, 4)}`;
 const toggle = (set, v) => set.has(v) ? set.delete(v) : set.add(v);
 
 // ---------- dados ----------
@@ -210,27 +207,16 @@ function renderLegend() {
   $('legend').innerHTML = Object.entries(GROUPS).map(([g, x]) => `<span><i class="sw ${g}"></i>${x.label}</span>`).join('');
 }
 
-function renderQuick() {
-  const de = $('f-de').value, ate = $('f-ate').value, now = new Date();
-  const passado = monthStr(new Date(now.getFullYear(), now.getMonth() - 1, 1));
-  const match = { este: [monthStr(now), monthStr(now)], passado: [passado, passado], tudo: [state.cfg.start_month, monthStr(now)] };
-  document.querySelectorAll('#view-pf [data-quick]').forEach(b => {
-    const [a, z] = match[b.dataset.quick];
-    b.classList.toggle('on', a === de && z === ate);
-  });
-  return match;
-}
-
 // ---------- carga ----------
 async function load() {
   const seq = ++state.seq;
-  const de = $('f-de').value, ate = $('f-ate').value;
-  if (!de || !ate) return;
+  state.picker.setMonths(meses()); // vira o mês com o app aberto: "Este mês" passa a existir
+  const mes = state.picker.value;
   $('btn-refresh').disabled = true;
   $('status-text').textContent = 'Buscando…';
   let res;
   try {
-    res = await api().get_runs(de, ate);
+    res = await api().get_runs(mes, mes);
   } catch (e) {
     res = { error: String(e) };
   }
@@ -246,8 +232,7 @@ async function load() {
   $('error').hidden = true;
 
   state.runs = res.runs.map(r => ({ ...r, t: Date.parse(r.when) }));
-  const key = `${de}|${ate}`;
-  if (key !== state.periodKey) { state.periodKey = key; state.seenFails = null; state.newFails.clear(); }
+  if (mes !== state.periodKey) { state.periodKey = mes; state.seenFails = null; state.newFails.clear(); }
   const failIds = new Set(state.runs.filter(r => FAIL.has(r.state)).map(r => r.id));
   if (state.seenFails) for (const id of failIds) if (!state.seenFails.has(id)) state.newFails.add(id);
   state.seenFails = failIds;
@@ -257,12 +242,7 @@ async function load() {
   render();
 }
 
-let debounce;
-function periodChanged() {
-  renderQuick();
-  clearTimeout(debounce);
-  debounce = setTimeout(load, 300);
-}
+const meses = () => window.MonthPicker.range(state.cfg.start_month);
 
 function schedule() {
   clearInterval(state.timer);
@@ -273,14 +253,6 @@ function schedule() {
 // ---------- eventos ----------
 function bind() {
   $('btn-refresh').addEventListener('click', load);
-  $('f-de').addEventListener('change', periodChanged);
-  $('f-ate').addEventListener('change', periodChanged);
-  document.querySelectorAll('#view-pf [data-quick]').forEach(b => b.addEventListener('click', () => {
-    const [de, ate] = renderQuick()[b.dataset.quick];
-    $('f-de').value = de;
-    $('f-ate').value = ate;
-    periodChanged();
-  }));
   $('f-busca').addEventListener('input', render);
   $('f-ultimo').addEventListener('change', render);
   $('f-comfalha').addEventListener('change', render);
@@ -316,11 +288,9 @@ async function init() {
   state.started = true;
   state.cfg = await api().config();
   $('sub').textContent = `tags ${state.cfg.tags.join(' + ')} · prefect3.srna.co`;
-  $('quick-tudo').textContent = `Desde ${monthLabel(state.cfg.start_month)}`;
-  $('f-de').value = state.cfg.start_month;
-  $('f-ate').value = monthStr(new Date());
   renderLegend();
-  renderQuick();
+  state.picker = window.MonthPicker.mount('pf', load);
+  state.picker.setMonths(meses());
   bind();
   schedule();
   load();

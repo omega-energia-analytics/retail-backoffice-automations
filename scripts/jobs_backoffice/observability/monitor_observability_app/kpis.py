@@ -89,7 +89,10 @@ def dinheiro(v):
 
 
 def prazo_util(venc):
-    """Vencimento em fim de semana vale até a segunda-feira seguinte."""
+    """Vencimento em fim de semana vale até a segunda-feira seguinte.
+
+    Mesma regra de `monitor_nff_app/monitor._prazo_util` (coluna "Prazo" do painel do monitor):
+    KPI e painel precisam julgar "vencida" igual. Mudou aqui? Mude lá."""
     if pd.isna(venc):
         return venc
     return venc + pd.Timedelta(days=(7 - venc.weekday()) % 7 if venc.weekday() >= 5 else 0)

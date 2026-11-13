@@ -8,6 +8,8 @@ App desktop (pywebview), **somente leitura**, para acompanhar a esteira em uma j
   - **KPI 1 · % do valor das NFFs lançadas pela automação** (meta ≥ 90%): NFF do Oracle cruzada com o log do quickinvoices (`app/quick_invoices_log.py`). Automação = está no log com o mesmo valor; ajustada = está no log com outro valor; manual = não está em log nenhum. Meses antes do primeiro log aparecem como "sem log".
   - **KPI 2 · faturas não pagas no prazo** (meta ≤ 2): pagas depois do vencimento da distribuidora + vencidas sem pagamento, pelo mês do vencimento. Cada atraso vem com a causa (NFF lançada após o vencimento, vencimento do Oracle diferente do FattureWeb, sem NFF, pago parcial).
 
+**As três abas escolhem o período do mesmo jeito: um mês fechado** — select "Mês" + chips "Este mês" / "Mês passado" (componente único, `ui/monthpicker.js`). Deploys lista os últimos 12 meses; Execuções, de jun/2026 até o atual; KPIs, a série dos KPIs. Antes, Deploys usava "últimos N dias" e Execuções usava De/Até com "Desde o início"; o intervalo livre continua disponível no CLI (`monitor_prefect.py --mes`).
+
 GitHub e Prefect têm um badge com o nº de deployments cujo **último run falhou**, mesmo com a aba fechada, e carregam na abertura; um erro de uma (ex.: Prefect sem VPN) aparece só no painel dela. A aba **KPIs só carrega quando é aberta** (o login do Snowflake abre no navegador) e o badge dela é o nº de faturas vencidas sem pagamento.
 
 ## Como rodar
@@ -38,7 +40,7 @@ python monitor_prefect.py --watch 5      # atualiza a cada 5 min, bipa em falha 
 
 ```text
 main.py              cria a janela e injeta Api
-api.py               Api com dois sub-objetos: api.github e api.prefect
+api.py               Api com três sub-objetos: api.github, api.prefect e api.kpis
 github_api.py        consulta a API REST do GitHub Actions
 prefect_api.py       ponte para monitor_prefect.py
 monitor_prefect.py   busca na API do Prefect (também é o CLI)
@@ -47,6 +49,7 @@ kpis.py              regra dos KPIs, pura (testes em jobs_backoffice/tests/test_
 ui/
   index.html         abas + um <main> por monitor
   app.js             shell: abas, badges, tooltip global, boot (abas LAZY só no 1º clique)
+  monthpicker.js     seletor de mês fechado, compartilhado pelas três abas (carregar antes dos módulos)
   github.js          módulo da aba Deploys
   prefect.js         módulo da aba Execuções
   kpis.js            módulo da aba KPIs
@@ -56,7 +59,8 @@ ui/
 ## Para quem for mexer
 
 - **API aninhada:** os dois monitores têm `config` e `get_runs`, então no JS são chamados como `window.pywebview.api.github.*` e `window.pywebview.api.prefect.*`. Método novo vai na classe `Api` do monitor correspondente.
-- **IDs prefixados:** tudo na aba GitHub usa `gh-…` e na Prefect `pf-…` (cada módulo tem seu `$ = id => document.getElementById('gh-' + id)`). Não use `document.getElementById` direto dentro dos módulos.
+- **Período = mês fechado, sempre.** Aba nova que filtre por tempo usa `MonthPicker.mount('<prefixo>', onChange)` com um `<div class="monthpick" data-monthpick="<prefixo>">` no bloco de filtros, em vez de inventar outro seletor. `setMonths(lista)` define os meses (crescente) e `value` é o escolhido; o `onChange` só dispara por ação do usuário, então quem chama decide quando carregar. No backend, `github_api.get_runs(month)` recebe `AAAA-MM` (janela em horário de Brasília) e `prefect_api.get_runs(de, ate)` recebe o mesmo mês nas duas pontas.
+- **IDs prefixados:** tudo na aba GitHub usa `gh-…`, na Prefect `pf-…` e na KPIs `kp-…` (cada módulo tem seu `$ = id => document.getElementById('gh-' + id)`). Não use `document.getElementById` direto dentro dos módulos.
 - **Escopo:** cada `.js` é uma IIFE e se registra em `window.Monitors.<nome>`; o `app.js` chama `init()` de cada um. O tooltip (`data-tip`) e o badge (`window.setBadge`) ficam no shell.
 - **Aba nova:** crie `<main class="view" id="view-xx">` e o `.tab` no `index.html`, um `xx.js` registrando em `window.Monitors`, e inclua o prefixo em `TABS` no `app.js` (e em `LAZY`, se ela não puder carregar na abertura).
 - **KPIs — a base é a do monitor de NFF, sem query própria.** O `kpi_api` chama `monitor_nff_app/monitor.carregar_base()` e aplica `monitor.pagamento_efetivo()` em todas as linhas. Universo (`PROJETOS` FW/E-MAIL), NFF, "Pago", data de pagamento, Valor Oracle e fatura zerada são os do painel do monitor — conciliado em 12/11/2026: 850 linhas do painel com NFF (jan–nov/2026), zero diferença. Regra de pagamento mudou? Muda no monitor e vale para os dois. Não crie query paralela: foi a primeira versão e já divergia em caso de borda.

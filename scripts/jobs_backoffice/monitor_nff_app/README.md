@@ -1,7 +1,8 @@
 # Monitor NFF
 
 App desktop que responde, para cada usina GD e cada mês: **a fatura CUSD da distribuidora chegou?
-chegou no prazo? já foi paga?** Uma linha por projeto/mês, com NFF, UC, status e pagamento.
+chegou no prazo? já foi paga? e o prazo de pagar, está em dia ou venceu?** Uma linha por
+projeto/mês, com NFF, UC, status, pagamento e vencimento.
 
 ## Por que existe
 
@@ -177,7 +178,7 @@ degrau novo é *não melhorar* uma linha — nunca piorar.
 
 Corolário nas colunas de saída: **coluna nova entra no fim da lista**, nunca no meio (`Fonte
 Pagamento`, `Competência`, `Faturas no Mês`, `NFF Adicionais`, `Valor Oracle`, `Divergência Valor`,
-`Fatura Zerada` entraram assim). Quem consome lê por nome, mas quem exporta para Excel lê por posição.
+`Fatura Zerada`, `NFF Cancelada` e as de vencimento entraram assim). Quem consome lê por nome, mas quem exporta para Excel lê por posição.
 
 ### Valor da fatura: o painel mostra as DUAS pontas, não escolhe
 
@@ -217,6 +218,37 @@ Quem traduz é a UI: com `Pago` falso e `Fatura Zerada` verdadeiro, a célula mo
 a fatura sai do card/chip "A pagar" e entra em "Zeradas", e a exportação escreve `Zerada` na coluna
 Pago. Total **ausente** não é zero: sem `Total Fatura`, a fatura segue "A pagar".
 
+### Vencimento: o prazo de pagar é outra pergunta que o `Status`
+
+`Status` responde "a fatura **chegou** no prazo?" (contra a `Data Esperada`, o `Dia` de `PROJETOS`).
+Não diz se ela já passou do **prazo de pagar**, e uma fatura chegada e não paga não mostrava isso.
+Desde 13/11/2026 o painel cruza o **vencimento impresso na fatura** (`VENCIMENTO_FW`, FattureWeb)
+com o pagamento — as colunas `Vencimento`, `Prazo Pagamento`, `Situação Prazo`, `Dias Prazo`,
+`Vence Logo` e `Valor Fatura`, todas no fim da lista de saída. `Status` e `Pago` não mudaram.
+
+- **Prazo = vencimento; sábado/domingo vale até a segunda** (`_prazo_util`). Feriado não é tratado.
+  A mesma regra está em `observability/.../kpis.py` (`prazo_util`), porque o KPI 2 e este painel
+  precisam julgar "vencida" igual. **Mudou aqui? Mude lá.** São duas cópias de 3 linhas, de propósito:
+  o `kpis.py` é puro e testável sem importar o `monitor.py` (que puxa Snowflake).
+- **`Situação Prazo`** (`_situacao_prazo`): `Vencida` (não paga e o prazo passou), `Em dia` (não paga e
+  o prazo ainda vale — vencer **hoje** ainda é em dia), `Paga no prazo`, `Paga com atraso`, `Paga`
+  (paga pela parcela do Oracle sem data nenhuma: não dá para julgar) ou vazio (sem vencimento no
+  FattureWeb, fatura zerada ou NFF cancelada: não há prazo a cobrar). `Dias Prazo` é a folga entre o
+  prazo e o pagamento (ou hoje, se não paga): positivo sobrou prazo, negativo é atraso.
+- **`Vence Logo`** = `Em dia` com folga ≤ `DIAS_ALERTA_PRAZO` (2). Alimenta o selo âmbar, o chip e o
+  card "Vence ≤2d". O número também está escrito nos rótulos da UI (`app.js`) — mexeu na constante,
+  ajuste os textos.
+- **`Valor Fatura`** = `Total Fatura` do FW e, sem ele, `Valor Oracle`. Existe para o card somar as
+  vencidas em R$. Não é o valor pago (ver *Limitações*).
+- **A UI**: `Vencimento` em vermelho só quando `Vencida`; coluna `Prazo` com o selo; chips/cards
+  `Vencidas` e `Vence ≤2d` (com R$); filtro `Prazo`; linha vencida ganha o fundo de `row-danger`.
+  O chip antigo "Vence ≤3d" virou **"Chega ≤3d"**: ele sempre mediu a **chegada** da fatura
+  pendente (`Dias Restantes`), e o nome colidia com o vencimento de verdade.
+- **Só vale para o mês de chegada** que a aba está mostrando: uma fatura de outubro vencida e sem
+  pagamento não aparece em novembro. A visão por mês do vencimento é a da aba KPIs do observability.
+- Data de pagamento do degrau 3 (parcela) é aproximada, então `Paga no prazo`/`Paga com atraso`
+  nessas faturas também é (a coluna `Fonte Pagamento` sinaliza).
+
 ### Refaturamento: a versão válida é a exibida
 
 A distribuidora às vezes reemite a fatura do mês (mesma competência, outra NFF), e só a última
@@ -249,10 +281,11 @@ de pagamento e valores batam com este painel por construção. Consequências pa
 
 - **`pagamento_efetivo()` é a regra única de "Pago".** Era inline no `montar_mes`; saiu para uma
   função para os dois consumidores usarem a mesma. Mudou a cascata? Muda ali.
-- **Duas colunas existem só para os KPIs** (o painel não as exibe): `VENCIMENTO_FW` (vencimento
-  impresso na fatura, do FattureWeb) e `DATA_NFF` (INVOICEDATE do Oracle, completada pela chave
-  normalizada em chamada própria). `DATA_NFF` é coluna nova e não reaproveita `DATA_INVOICE` de
-  propósito: completar `DATA_INVOICE` moveria faturas de mês na cascata.
+- **`VENCIMENTO_FW`** (vencimento impresso na fatura, do FattureWeb) nasceu para o KPI 2 e hoje é
+  dividido: o painel também o exibe (ver *Vencimento*, acima).
+- **`DATA_NFF`** (INVOICEDATE do Oracle, completada pela chave normalizada em chamada própria) existe
+  só para os KPIs; o painel não a exibe. É coluna nova e não reaproveita `DATA_INVOICE` de propósito:
+  completar `DATA_INVOICE` moveria faturas de mês na cascata.
 - Renomear ou remover colunas do `df_merged` quebra a aba KPIs — os testes dela
   (`jobs_backoffice/tests/test_kpis_cusd.py`) carregam este `monitor.py` e pegam isso.
 

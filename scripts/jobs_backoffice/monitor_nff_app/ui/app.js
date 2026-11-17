@@ -763,9 +763,9 @@ function hojeStr() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-async function exportar(linhas, nomeSugerido, label) {
+async function exportar(linhas, nomeSugerido, label, info) {
   if (!linhas || !linhas.length) { toast(`Sem ${label} para exportar`, 'error'); return; }
-  const r = await call(() => api().exportar_excel(linhas, nomeSugerido));
+  const r = await call(() => api().exportar_excel(linhas, nomeSugerido, info || null));
   if (!r) return;
   if (r.cancelado) return;
   toast(`${r.linhas} ${label} exportadas`, 'success');
@@ -803,7 +803,33 @@ function exportarFaturas() {
     'Valor Oracle': f['Valor Oracle'],
     'Divergência Valor': f['Divergência Valor']
   }));
-  exportar(linhas, `faturas_${hojeStr()}.xlsx`, 'faturas');
+  exportar(linhas, `faturas_${hojeStr()}.xlsx`, 'faturas', infoExportFaturas());
+}
+
+// Aba "Info" do export de Faturas: de que momento é a base e o que estava filtrado.
+// O export é o retrato da TELA (base cacheada + filtros), então sem isso o arquivo não
+// responde "por que essa NFF não aparece?" — base antiga ou filtro ativo.
+function infoExportFaturas() {
+  const fmt = iso => iso ? new Date(iso).toLocaleString('pt-BR') : 'sem carga';
+  const sel = id => {
+    const el = document.getElementById(id);
+    return el && el.value ? el.options[el.selectedIndex].text : '(todos)';
+  };
+  const m = mesArgs();
+  const chip = FATURA_CHIPS.find(c => c.key === state.quickFilter) || FATURA_CHIPS[0];
+  const busca = document.getElementById('filter-text').value.trim();
+  return [
+    ['Exportado em', new Date().toLocaleString('pt-BR')],
+    ['Base consultada no Snowflake em', fmt(state.lastUpdateTs)],
+    ['Mês do painel (por chegada)', `${String(m.mes).padStart(2, '0')}/${m.ano}`],
+    ['Linhas exportadas', state.faturasFiltradas.length],
+    ['Linhas do mês (sem filtro)', state.faturas.length],
+    ['Filtro rápido (chip)', chip.label],
+    ['Busca', busca || '(vazia)'],
+    ['Filtro Status', sel('filter-status')],
+    ['Filtro Pago', sel('filter-pago')],
+    ['Filtro Prazo', sel('filter-prazo')],
+  ];
 }
 
 function exportarNffs() {

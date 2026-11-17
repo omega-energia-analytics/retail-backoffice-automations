@@ -203,9 +203,14 @@ class Api:
         return {"ok": True, "data": {"ts": self._cache_ts}}
 
     # --- Exportação ---
-    def exportar_excel(self, linhas, nome_sugerido):
+    def exportar_excel(self, linhas, nome_sugerido, info=None):
         """Recebe a lista de linhas (já filtrada na UI) e grava um .xlsx no
-        caminho escolhido pelo usuário via diálogo 'Salvar como'."""
+        caminho escolhido pelo usuário via diálogo 'Salvar como'.
+
+        `info` (opcional): lista de pares [campo, valor] gravada numa 2ª aba 'Info'.
+        O export reflete a tela (base cacheada + filtros), então sem isso o arquivo
+        não diz de que momento é nem o que estava filtrado — foi o que impediu de
+        entender por que uma NFF não aparecia num relatório exportado."""
         try:
             if not linhas:
                 return {"ok": False, "error": "Nada para exportar."}
@@ -223,7 +228,14 @@ class Api:
                 caminho += '.xlsx'
 
             df = pd.DataFrame(linhas)
-            df.to_excel(caminho, index=False, engine='openpyxl')
+            with pd.ExcelWriter(caminho, engine='openpyxl') as xw:
+                df.to_excel(xw, index=False, sheet_name='Dados')
+                if info:
+                    pd.DataFrame(info, columns=['Campo', 'Valor']).to_excel(
+                        xw, index=False, sheet_name='Info'
+                    )
+                    xw.sheets['Info'].column_dimensions['A'].width = 28
+                    xw.sheets['Info'].column_dimensions['B'].width = 60
 
             return {"ok": True, "data": {"caminho": caminho, "linhas": len(linhas)}}
         except Exception as e:

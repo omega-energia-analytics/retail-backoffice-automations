@@ -99,6 +99,21 @@ botão de recarregar (`force_refresh=True`) é o único caminho para bater no Sn
 Se você adicionar algo ao pipeline, respeite a divisão: **rede em `carregar_base()`, regra de mês em
 `montar_mes()`**. Foi o que permitiu testar a regra de negócio inteira sem mock de Snowflake.
 
+### O export é o retrato da tela, e a aba `Info` diz de qual
+
+Os botões de exportar gravam um `.xlsx` com o que a UI está mostrando: **base cacheada + filtros
+ativos**. Quem recebe o arquivo não vê nada disso, então a pergunta "por que a NFF X não aparece no
+relatório?" ficava sem resposta — base carregada horas antes? chip ou filtro escondendo a linha?
+
+Por isso o export de **Faturas** (`exportar_excel(linhas, nome, info)`) ganha uma 2ª aba, `Info`, com
+pares campo/valor: quando foi exportado, **quando a base foi consultada no Snowflake**, o mês do
+painel, linhas exportadas × linhas do mês sem filtro, e o chip, a busca e os filtros de Status, Pago
+e Prazo. A aba `Dados` continua igual (mesma ordem de colunas). Os exports de Parceiros, Histórico e
+NFFs passam sem `info` e saem só com `Dados`; `info` é opcional na `Api`.
+
+Se você criar um filtro novo na aba Faturas, acrescente-o em `infoExportFaturas()` ([`ui/app.js`](ui/app.js)) —
+filtro que não está na `Info` volta a ser filtro invisível.
+
 ### O histórico grava mudança, não snapshot
 
 A aba **Histórico** responde "o que mudou nesta usina ao longo do tempo?" — a pergunta que o painel,

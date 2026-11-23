@@ -43,7 +43,7 @@ Quatro queries, todas resolvidas pelo `conf_cusd_invoices.yml` (nome lógico →
 
 | Nome lógico | Fonte | Papel |
 |---|---|---|
-| `job_monitoramento` | `MONITORAMENTO_CUSD_AWS` | **âncora**: é a única fonte que amarra nota → acrônimo da usina |
+| `job_monitoramento` | `USINAS_GERACAO` (dbt, `RETAIL_PROD`) | **âncora**: é a única fonte que amarra nota → acrônimo da usina. Desde 15/10/2026 (PROD em 28/10); antes era a `MONITORAMENTO_CUSD_AWS` (lambda) |
 | `pagamentos_usinas` | `ap_oracle_view` (`AP_PAYMENTS` + `AP_INSTALLMENTS`) | as **duas** portas de pagamento do Oracle, numa leitura só |
 | `fattureweb_usinas` | `FATTUREWEB_USINAS` | apresentação, competência, emissão, UC, **endereço** |
 | `hist_usina_livia` | `MONITORAMENTO_HIST_USINA` | cadastro de usinas — de/para UC → acrônimo |
@@ -51,11 +51,15 @@ Quatro queries, todas resolvidas pelo `conf_cusd_invoices.yml` (nome lógico →
 Nenhuma filtra data no servidor: a base vem inteira e o recorte de mês é feito em memória (ver
 cache, abaixo).
 
+> O **Quick Invoices** (`app/create_quick_invoices.py`) **não** usa a âncora acima: ele lê a
+> `MONITORAMENTO_CUSD_AWS` (`stg_cusd_monitoring.sql`) mais o suplemento do FattureWeb. São duas
+> fontes de nota diferentes para dois consumidores diferentes — mexeu numa, confira a outra.
+
 O que a `pagamentos_usinas` filtra é **escopo**, não período. Ela existe porque a `AP_ORACLE_VIEW`
 era lida duas vezes e inteira — 1.004.303 + 975.691 linhas para usar 1.113 (medido em 05/08/2026) —
 e a view é `materialized='view'` sobre três `QUALIFY ROW_NUMBER()`, logo era recalculada duas vezes
 por abertura. Era esse o gargalo do startup. O recorte é pelas notas que o monitor consegue casar
-(`MONITORAMENTO_CUSD_AWS` ∪ `FATTUREWEB_USINAS` dos consórcios GD), pela chave normalizada do
+(`USINAS_GERACAO` ∪ `FATTUREWEB_USINAS` dos consórcios GD), pela chave normalizada do
 `_nf_key`. Detalhe e números no header do [`stg_pagamentos_usinas.sql`](../../sql/stg_pagamentos_usinas.sql)
 e em [`tests/README.md`](tests/README.md).
 
@@ -384,7 +388,8 @@ commite o `.spec`.
 
 ## Limitações conhecidas
 
-- **CELPE, COELBA e CEMIG não sobem para o `MONITORAMENTO_CUSD_AWS`.** As faturas delas entram pelo
+- **CELPE, COELBA e CEMIG não sobem para o `MONITORAMENTO_CUSD_AWS`** (a fonte do Quick Invoices; a
+  âncora do monitor hoje é a `USINAS_GERACAO`). As faturas delas entram pelo
   suplemento FW+Oracle, que depende de haver de/para de UC. Sem de/para, a usina aparece sem
   fatura — não é bug do painel, é ausência de ingestão a montante.
 - **O de/para por endereço cobre a virada de UC da CPFL** (padrão ANEEL, competência 06/2026)

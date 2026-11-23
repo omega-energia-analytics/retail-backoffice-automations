@@ -4,6 +4,11 @@
 -- Invoices, lendo só o cusd_monitoring, nunca as via — mesmo elas já aparecendo
 -- no monitor de NFF (que tem um degrau supletivo próprio, monitor.py::carregar_base).
 --
+-- [23/11/2026] As duas leituras do MONITORAMENTO_CUSD_AWS abaixo (mapa CNPJ -> consórcio e
+-- o NOT IN) passaram a ler a MONITORAMENTO_CUSD_NOVO_PIPE, a réplica da lambda no Prefect.
+-- Os comentários que citam a CUSD seguem valendo: é a mesma lógica, só outra tabela.
+-- Ver o header do stg_cusd_monitoring.sql.
+--
 -- Diferente do monitor, NÃO fazemos de/para de UC->ACRONIMO aqui: o cadastro
 -- (MONITORAMENTO_HIST_USINA) usa a UC ANTIGA e o FattureWeb já traz a UC NOVA para
 -- COELBA (virada ANEEL, mesmo caso da CPFL — ver CLAUDE.md), então o join por
@@ -31,7 +36,7 @@ WITH cnpj_para_consorcio AS (
         REGEXP_REPLACE(DISTRIBUIDORA_CNPJ, '[^0-9]', '') AS CNPJ_LIMPO,
         MIN(DISTRIBUIDORA)    AS DISTRIBUIDORA_SIGLA,
         MIN(CLIENTE_APELIDO)  AS CLIENTE_APELIDO
-    FROM RETAIL_PROD.BACKOFFICE.MONITORAMENTO_CUSD_AWS
+    FROM RETAIL_PROD.BACKOFFICE.MONITORAMENTO_CUSD_NOVO_PIPE
     WHERE DISTRIBUIDORA_CNPJ IS NOT NULL
       AND DISTRIBUIDORA IS NOT NULL
       AND CLIENTE_APELIDO IS NOT NULL
@@ -100,6 +105,6 @@ WHERE TOTAL_DA_FATURA IS NOT NULL
   )
   AND NOTA_FISCAL NOT IN (
       SELECT NOTA_FISCAL
-      FROM RETAIL_PROD.BACKOFFICE.MONITORAMENTO_CUSD_AWS
+      FROM RETAIL_PROD.BACKOFFICE.MONITORAMENTO_CUSD_NOVO_PIPE
       WHERE NOTA_FISCAL IS NOT NULL
   )

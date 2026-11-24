@@ -22,6 +22,8 @@ class Api:
         self._cache_ts = None
         # planilha de contratos dos parceiros (aba Controle_Emissão)
         self._cache_parceiros = None
+        # Quick Invoices Usinas: criado na 1ª vez que a tela é usada (ver _qi)
+        self._quick_invoices = None
         db.init_db()
 
     def _base(self, force_refresh=False):
@@ -240,6 +242,44 @@ class Api:
             return {"ok": True, "data": {"caminho": caminho, "linhas": len(linhas)}}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # --- Quick Invoices Usinas ---
+    def _qi(self):
+        """Serviço do Quick Invoices, importado só quando a tela é usada: uma dependência
+        faltando ali (xlwings, por exemplo) não pode impedir o monitor de abrir."""
+        if self._quick_invoices is None:
+            import quick_invoices
+            self._quick_invoices = quick_invoices.QuickInvoicesService()
+        return self._quick_invoices
+
+    def qi_status(self):
+        """Pré-requisitos da tela (planilha, xlwings, limites). Barato: não consulta nada."""
+        try:
+            return {"ok": True, "data": self._qi().status()}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def qi_buscar(self, dias, ate=None):
+        """Passo 1: o que iria para a planilha nos últimos `dias` dias. Não grava nada."""
+        import traceback
+        try:
+            print(f"[api] qi_buscar(dias={dias}, ate={ate})", flush=True)
+            return {"ok": True, "data": self._qi().buscar(dias, ate)}
+        except Exception as e:
+            print(f"[api] ERRO em qi_buscar: {e}", flush=True)
+            traceback.print_exc()
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def qi_enviar(self, ids):
+        """Passo 2: escreve na planilha ADFDI as linhas escolhidas (ids da última busca)."""
+        import traceback
+        try:
+            print(f"[api] qi_enviar({len(ids or [])} linhas)", flush=True)
+            return {"ok": True, "data": self._qi().enviar(ids)}
+        except Exception as e:
+            print(f"[api] ERRO em qi_enviar: {e}", flush=True)
+            traceback.print_exc()
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     # --- Faturas Parceiro ---
     def _parceiros(self, force_refresh=False):

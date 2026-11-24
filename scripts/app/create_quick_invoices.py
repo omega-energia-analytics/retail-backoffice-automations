@@ -34,12 +34,36 @@ def normaliza_chave_bloqueio(valor):
 
 
 class CreateQuickInvoices():
-    def __init__(self):
+    def __init__(self, connection=None, workbook_path=None, abrir_planilha=True):
+        """Sem argumentos se comporta como sempre (notebook): abre a planilha e conecta.
+
+        O monitor de NFF usa os três para buscar SEM abrir o Excel:
+            connection     reaproveita uma conexão Snowflake já aberta
+            workbook_path  planilha escolhida na UI (default: ~/Faturas Oracle/<conf>)
+            abrir_planilha False adia o xlwings até a primeira escrita (property `sheet`)
+        """
         self.conf = get_conf_by_project('cusd_invoices')
         model_parameters = self.conf["model_parameters"]
-        wb = xw.Book(str(Path.home() / "Faturas Oracle" / model_parameters["output_files"]["workbook_name"]))
-        self.sheet = wb.sheets[model_parameters["output_files"]["sheet_name"]]
-        self.connection = initialize_snowflake_connection()
+        self._workbook_path = str(
+            workbook_path
+            or Path.home() / "Faturas Oracle" / model_parameters["output_files"]["workbook_name"]
+        )
+        self._sheet = None
+        self.connection = connection or initialize_snowflake_connection()
+        # Preenchidos por read_query/format_to_quick_invoices — o monitor mostra na tela o que
+        # antes só saía no print do terminal.
+        self.ultimo_erro_query = None
+        self.avisos = []
+        if abrir_planilha:
+            self.sheet  # noqa: B018 — abre já, para falhar cedo como sempre falhou
+
+    @property
+    def sheet(self):
+        if self._sheet is None:
+            output_files = self.conf["model_parameters"]["output_files"]
+            wb = xw.Book(self._workbook_path)
+            self._sheet = wb.sheets[output_files["sheet_name"]]
+        return self._sheet
 
 
     def rename_rows(self, row, rename_map, conf_rename):
@@ -102,6 +126,11 @@ class CreateQuickInvoices():
             | df["NUMERO_DA_INSTALACAO"].map(normaliza_chave_bloqueio).isin(ucs)
         )
 
+        # Guardados para o monitor: as linhas barradas (a tela lista o que ficou de fora e por
+        # quê) e o acrônimo de cada linha, que sai do df logo abaixo mas ajuda a achar a usina.
+        self.bloqueadas = df.loc[bloqueada].copy()
+        self.acronimos = df["ACRONIMO"]
+
         if bloqueada.any():
             removidas = df.loc[bloqueada, COLUNAS_DE_BLOQUEIO + ["NOTA_FISCAL"]]
             print(
@@ -124,7 +153,8 @@ class CreateQuickInvoices():
             return df
         except Exception as e:
             print(f"Error reading query: {e}")
-            return None      
+            self.ultimo_erro_query = e
+            return None
 
 
     def format_to_quick_invoices(self, df, **kwargs):
@@ -135,7 +165,11 @@ class CreateQuickInvoices():
         df = self.remove_usinas_bloqueadas(df)
 
         # Drop rows that are not completely filled
+        antes_do_dropna = df
         df = df.dropna()
+        # Linhas que o dropna levou: nunca chegam à planilha e, sem este registro, ninguém
+        # sabe que existiram (o monitor lista na tela).
+        self.incompletas = antes_do_dropna.loc[~antes_do_dropna.index.isin(df.index)]
         print(df)
 
         # Add new columns that have fixed value
@@ -162,6 +196,11 @@ class CreateQuickInvoices():
 
         df = self.select_emission_date(df, **kwargs)
 
+        # Mesma janela de datas para o que ficou de fora, senão "barradas" contaria o
+        # histórico inteiro da fonte, não o período pedido.
+        self.bloqueadas_no_periodo = self.select_emission_date(self.bloqueadas, **kwargs)
+        self.incompletas_no_periodo = self.select_emission_date(self.incompletas, **kwargs)
+
         return df
 
 
@@ -184,13 +223,25 @@ class CreateQuickInvoices():
 
 
     def get_invoices(self, **kwargs):
+        self.avisos = []
+        self.ultimo_erro_query = None
         df = self.read_query("cusd_monitoring")
+        if df is None:
+            # read_query engole o erro e devolve None; seguir daqui estouraria um
+            # AttributeError sem relação com a causa real.
+            raise RuntimeError(f"Falha ao consultar o Snowflake (cusd_monitoring): {self.ultimo_erro_query}")
 
         # Suplemento: notas de distribuidoras que não sobem para o MONITORAMENTO_CUSD_AWS
         # (COELBA, CELPE, CEMIG) e por isso nunca apareciam aqui, mesmo já visíveis no
         # monitor de NFF. Ver header do stg_cusd_invoices_suplemento.sql.
         df_suplemento = self.read_query("cusd_invoices_suplemento")
-        if df_suplemento is not None and not df_suplemento.empty:
+        if df_suplemento is None:
+            # Segue sem ele (como sempre seguiu), mas agora quem chama fica sabendo.
+            self.avisos.append(
+                "Suplemento indisponível: notas de COELBA, CELPE e CEMIG podem estar "
+                f"faltando nesta lista ({self.ultimo_erro_query})."
+            )
+        elif not df_suplemento.empty:
             df = pd.concat([df, df_suplemento], ignore_index=True)
 
         df_copy = self.format_to_quick_invoices(df, **kwargs)

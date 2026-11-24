@@ -7,4 +7,7 @@ PyYAML
 python-dotenv
 requests
 snowflake-connector-python[pandas]==3.14.0
+# Quick Invoices Usinas: escreve na planilha ADFDI via COM (traz pywin32). Só o envio precisa
+# do Excel; a busca funciona sem.
+xlwings
 colorama

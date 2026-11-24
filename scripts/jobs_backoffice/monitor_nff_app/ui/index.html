@@ -11,6 +11,7 @@
     <nav>
       <button class="nav-btn active" data-view="dashboard">📊 Dashboard</button>
       <button class="nav-btn" data-view="faturas">📋 Faturas Usinas</button>
+      <button class="nav-btn" data-view="quickinvoices">⚡ QuickInvoices Usinas</button>
       <button class="nav-btn" data-view="parceiros">🤝 Faturas Parceiro</button>
       <button class="nav-btn" data-view="historico">📜 Histórico</button>
       <!-- <button class="nav-btn" data-view="nffs">🗂 NFFs</button> -->
@@ -69,6 +70,44 @@
         <button id="btn-export-faturas" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
       </div>
       <div class="table-wrap"><table id="tbl-faturas"></table></div>
+    </section>
+
+    <!-- QUICK INVOICES USINAS -->
+    <section id="view-quickinvoices" class="view">
+      <h1>Quick Invoices Usinas — montar a planilha de NFFs</h1>
+      <div class="filters qi-filters">
+        <label class="mes-label" for="qi-dias">Últimos</label>
+        <input type="number" id="qi-dias" class="qi-dias" min="1" max="365" value="30"
+               title="Quantos dias para trás olhar, pela data de emissão da fatura">
+        <label class="mes-label" for="qi-ate">dias, até</label>
+        <input type="date" id="qi-ate" class="qi-ate" title="Data final da janela (padrão: hoje)">
+        <div class="chips" id="qi-presets"></div>
+        <button id="btn-qi-buscar" class="primary" title="Consulta o Snowflake. Não grava nada na planilha.">🔎 Buscar</button>
+      </div>
+      <p class="muted" id="qi-info">—</p>
+      <div id="qi-avisos"></div>
+      <div id="qi-resultado"></div>
+      <div class="cards" id="qi-cards"></div>
+      <div class="chips" id="qi-chips"></div>
+      <div class="filters qi-acoes">
+        <input type="text" id="qi-filter-text" placeholder="Buscar NFF / acrônimo / unidade / fornecedor...">
+        <span id="qi-sel-info" class="badge">—</span>
+        <button id="btn-qi-sel-novas" class="secondary" title="Marca só as NFFs novas e sem alerta (até o limite da planilha)">Selecionar novas</button>
+        <button id="btn-qi-sel-limpar" class="secondary">Limpar seleção</button>
+        <button id="btn-export-qi" class="secondary" title="Exportar para Excel">📤 Exportar Excel</button>
+        <button id="btn-qi-enviar" class="primary" disabled>⚡ Enviar para a planilha</button>
+      </div>
+      <div class="table-wrap"><table id="tbl-qi"></table></div>
+      <details id="qi-det-barradas" class="qi-det">
+        <summary id="qi-sum-barradas">Usinas barradas</summary>
+        <p class="muted">Ficam de fora de propósito (<code>nff_bloqueados</code> no conf): não podem gerar NFF.</p>
+        <div class="table-wrap"><table id="tbl-qi-barradas"></table></div>
+      </details>
+      <details id="qi-det-incompletas" class="qi-det">
+        <summary id="qi-sum-incompletas">Linhas incompletas</summary>
+        <p class="muted">Foram descartadas porque falta algum dado na fonte — não chegam à planilha. Se alguma deveria estar aqui, o problema está na origem.</p>
+        <div class="table-wrap"><table id="tbl-qi-incompletas"></table></div>
+      </details>
     </section>
 
     <!-- FATURAS PARCEIRO -->
@@ -146,6 +185,17 @@
       <pre id="excel-log" class="log"></pre>
     </section>
   </main>
+
+  <div id="qi-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2 id="qi-modal-titulo">Enviar para a planilha?</h2>
+      <div id="qi-modal-corpo"></div>
+      <div class="modal-actions">
+        <button id="qi-modal-cancelar" class="secondary">Cancelar</button>
+        <button id="qi-modal-ok" class="primary">⚡ Enviar</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast"></div>
   <div id="loading" class="hidden"><div class="spinner"></div></div>

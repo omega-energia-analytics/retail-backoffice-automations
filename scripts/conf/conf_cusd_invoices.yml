@@ -103,6 +103,9 @@ model_parameters:
     # Notas de COELBA/CELPE/CEMIG que não sobem para o MONITORAMENTO_CUSD_AWS — ver
     # header do .sql e create_quick_invoices.py::get_invoices.
     cusd_invoices_suplemento: stg_cusd_invoices_suplemento.sql
+    # Quais NFFs já estão no Oracle — marca "Já no Oracle" na tela Quick Invoices Usinas do
+    # monitor de NFF. Recebe a lista de chaves em {CHAVES}; ver o header do .sql.
+    quick_invoices_oracle: stg_quick_invoices_oracle.sql
     crm: stg_crm.sql
     crm_extraction: stg_crm_extraction.sql
     crm_rpa: stg_crm_rpa.sql

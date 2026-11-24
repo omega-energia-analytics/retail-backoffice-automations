@@ -30,6 +30,8 @@ monitor.py  → o pipeline de dados (pandas puro + as queries). É onde vive a r
 db.py       → SQLite local: controle_nff (NFFs enviadas pro Oracle) + historico_fatura
               (o que mudou no painel ao longo do tempo)
 config.py   → caminhos portáveis: env var > settings.json > default (~/Faturas Oracle/)
+quick_invoices.py → tela "QuickInvoices Usinas": busca, classifica e envia à planilha ADFDI
+              (reaproveita scripts/app/create_quick_invoices.py — ver a seção própria abaixo)
 ui/         → HTML/CSS/JS servidos localmente (sem framework, sem build, sem CDN)
 ```
 
@@ -307,6 +309,67 @@ de pagamento e valores batam com este painel por construção. Consequências pa
   completar `DATA_INVOICE` moveria faturas de mês na cascata.
 - Renomear ou remover colunas do `df_merged` quebra a aba KPIs — os testes dela
   (`jobs_backoffice/tests/test_kpis_cusd.py`) carregam este `monitor.py` e pegam isso.
+
+### QuickInvoices Usinas: o notebook dentro do monitor, em dois passos
+
+A tela faz o que `notebooks/nb_quick_invoices.ipynb` faz (`CreateQuickInvoices.run`), reaproveitando
+a **mesma classe** — query, bloqueio de usinas, `rename_maps`, escrita e log do KPI. O notebook
+continua existindo e funcionando igual; a diferença é que aqui o `run()` vira dois passos:
+
+1. **Buscar** (`Api.qi_buscar`) — só consulta. Dias de 1 a 365 (campo livre + atalhos 7/15/30/60/90) e
+   data final (padrão: hoje). Não abre o Excel nem grava nada.
+2. **Enviar** (`Api.qi_enviar`) — escreve **as linhas marcadas** na planilha, depois de um modal de
+   confirmação. O envio usa os `_id` da última busca guardada em memória: o que a pessoa viu e marcou
+   é exatamente o que vai, sem reconsultar.
+
+O que a busca acrescenta sobre o notebook:
+
+- **Cada NFF tem um de três status**: `Nova` / `Já no Oracle` / `Processada`. O Oracle é consultado por
+  `sql/stg_quick_invoices_oracle.sql` (só as NFFs da busca, chave normalizada como no `_nf_key`);
+  `Processada` vem dos logs do KPI — os do disco **e** os do SharePoint, ou seja, de qualquer usuário —
+  e mostra a **data e hora do envio** na própria linha. A seleção padrão é só `Nova` sem alerta, então
+  duas buscas sobrepostas não duplicam nota. Oracle manda sobre o log. Sem Oracle (falha), a tela avisa
+  e classifica só pelos logs. NFF que no Oracle só tem versão **cancelada** continua `Nova`, mas não vem
+  marcada e o detalhe avisa (relançar é decisão de quem conferiu).
+- **`Processada` quer dizer "passou pela automação", não "está no Oracle".** O log prova que a NFF foi
+  escrita na planilha; nada prova que o Upload foi feito. Quem sai do Excel sem salvar deixa a NFF
+  `Processada` sem ela ter ido ao Oracle — ela continua selecionável (o envio substitui a planilha, então
+  reenviar não duplica nada lá), mas não vem marcada. Para devolvê-la à fila como `Nova`, apague o log
+  daquele envio (disco e SharePoint, `log_quickinvoices/`); o monitor só considera os logs que ainda
+  estão listados no SharePoint, então não precisa reiniciar.
+- **O que ficou de fora aparece**: usinas barradas por `nff_bloqueados` e linhas descartadas por dado
+  incompleto (com o campo que falta). No notebook isso só saía no `print` do terminal. As duas listas
+  usam a mesma janela de datas da busca — o bloqueio roda antes do filtro de data, então sem recortar
+  contaria o histórico inteiro da fonte.
+- **Alertas por linha**: campo obrigatório vazio (unidade de negócio, fornecedor, nº do fornecedor,
+  CNPJ) ou valor zerado. Os `rename_maps` devolvem `None` para valor desconhecido (distribuidora nova),
+  e a NFF iria com a célula vazia. Linha com alerta não vem marcada; o modal avisa se for enviada.
+- **Falha de leitura não é silenciosa**: o suplemento (COELBA/CELPE/CEMIG) indisponível agora vira
+  aviso na tela — no notebook a falha era engolida e a lista saía sem essas notas.
+
+Decisões que não são óbvias:
+
+- **Limite de 100 NFFs por envio.** A aba `NFFs` do template só desbloqueia as linhas 9–108; escrever
+  além dá `com_error 0x800A03EC` no meio da gravação — e o fluxo **limpa as colunas antes de escrever**,
+  então a planilha ficaria pela metade. A tela barra acima de 100 (o backend também) e orienta o lote:
+  enviar, fazer o Upload no Oracle e buscar de novo (o que foi enviado sai da seleção).
+- **O envio substitui o conteúdo da planilha**, como o `run()` sempre fez. O modal diz isso.
+- **`xlwings` precisa de `CoInitialize` por thread.** Os métodos do pywebview rodam em threads do pool,
+  não na principal; sem isso a gravação falha com "CoInitialize não foi chamado". Por isso o envio abre
+  a planilha dentro de `_com()` e não guarda objetos COM entre chamadas.
+- **A janela de dias é por data de emissão e inclusiva** (`até − dias` a `até`, ambos os dias). O
+  notebook passa `datetime.now()`, que tem hora, e por isso perdia o primeiro dia da janela; aqui
+  passa-se a data.
+- **Auto-atualizar (15 min) não refaz a busca** desta tela: apagaria a seleção sem aviso.
+- **`xlwings` só é exigido para enviar**; buscar funciona sem o Excel. `api.py` importa o serviço sob
+  demanda, então dependência faltando aqui não impede o monitor de abrir.
+- O envio grava o log do KPI (`registrar_run`) com `origem: monitor_nff` nos parâmetros, e a tela
+  mostra se o log ficou `ok`, `pendente` (sobe no próximo envio) ou `falhou` (a NFF contaria como manual).
+
+Teste manual (o que a suíte não cobre — Snowflake, SharePoint e Excel): buscar 30 dias e conferir
+que as contagens fecham com o Oracle; enviar **3 linhas para uma cópia** da planilha (apontar
+`MONITOR_NFF_ARQUIVO_EXCEL`) e checar a aba `NFFs`. Não teste o envio na planilha em uso: ele grava
+log de verdade e suja o KPI 1.
 
 ### Quando a fonte nova não existe, o degrau se desliga
 

@@ -112,6 +112,18 @@ def _parametro(valor):
     return valor
 
 
+def normaliza_nff(valor):
+    """Chave para comparar NFFs: sem '.0' de float, sem espaço e sem zeros à esquerda.
+
+    Mesma regra do `_nf_key` do monitor de NFF — '047744547', '47744547' e '47744547.0' são
+    a MESMA nota. Serve só de chave: a NFF exibida continua a original.
+    """
+    texto = _texto_nff(valor)
+    if texto is None:
+        return None
+    return texto.lstrip("0") or None
+
+
 def montar_registro(df, parametros=None, usuario=None, maquina=None, agora=None):
     """Monta o dict do log de um run a partir do df que foi escrito na planilha."""
     agora = agora or datetime.now().astimezone()
@@ -189,6 +201,100 @@ def enviar_pendentes(upload, pasta=PASTA_LOCAL_PADRAO):
     return enviados, falhas
 
 
+# ---------------------------------------------------------------------------
+# Leitura dos logs — "essa NFF já foi lançada por alguém?"
+# ---------------------------------------------------------------------------
+
+def _data_do_nome(nome):
+    """Data do run a partir do nome do arquivo ('20261112T094312_usuario_...json'), ou None.
+    Permite descartar log antigo sem abrir nem baixar o arquivo."""
+    m = re.match(r"(\d{4})(\d{2})(\d{2})T\d{6}_", nome)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def ler_logs_locais(pasta=PASTA_LOCAL_PADRAO, desde=None):
+    """Registros dos runs desta máquina (pendentes + enviados). `desde` é uma `date`.
+
+    Inclui os pendentes de propósito: run que ainda não subiu ao SharePoint já escreveu a
+    planilha, e a NFF dele não pode aparecer como "nova" para quem rodar em seguida.
+    Arquivo ilegível é ignorado — um JSON corrompido não derruba a busca.
+    """
+    registros = []
+    for sub in ("pendentes", "enviados"):
+        for arquivo in sorted((Path(pasta) / sub).glob("*.json")):
+            dia = _data_do_nome(arquivo.name)
+            if desde and dia and dia < desde:
+                continue
+            try:
+                registros.append(json.loads(arquivo.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+    return registros
+
+
+def baixar_logs_sharepoint(token, drive_id, pasta_shp, desde=None, cache=None):
+    """Registros de TODOS os runs na pasta do SharePoint (de qualquer usuário/máquina).
+
+    Log é imutável depois de gravado, então `cache` (dict nome -> registro, alterado no
+    lugar) evita baixar de novo o que já veio. `desde` filtra pelo nome do arquivo antes do
+    download. Levanta exceção se a rede/Graph falhar — quem chama decide se segue sem isso.
+    """
+    import requests
+
+    cache = {} if cache is None else cache
+    pasta = quote(pasta_shp.strip("/"), safe="/")
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{pasta}:/children?$top=999"
+    nomes = []
+    while url:
+        resposta = requests.get(url, headers=headers, timeout=30)
+        if resposta.status_code == 404:  # pasta ainda não existe: ninguém rodou com o log
+            break
+        resposta.raise_for_status()
+        corpo = resposta.json()
+        for item in corpo.get("value", []):
+            nome = item.get("name", "")
+            if not nome.endswith(".json"):
+                continue
+            dia = _data_do_nome(nome)
+            if desde and dia and dia < desde:
+                continue
+            nomes.append(nome)
+            if nome not in cache:
+                arquivo = requests.get(item["@microsoft.graph.downloadUrl"], timeout=30)
+                arquivo.raise_for_status()
+                cache[nome] = arquivo.json()
+        url = corpo.get("@odata.nextLink")
+    return [cache[n] for n in nomes]
+
+
+def nffs_lancadas(registros):
+    """Índice `chave normalizada da NFF -> {run_id, executado_em, usuario}` do run MAIS
+    RECENTE que escreveu aquela NFF na planilha. Registros repetidos (o mesmo run lido do
+    disco e do SharePoint) contam uma vez só."""
+    unicos = {}
+    for reg in registros:
+        if isinstance(reg, dict):
+            unicos[reg.get("run_id") or id(reg)] = reg
+
+    indice = {}
+    for reg in sorted(unicos.values(), key=lambda r: r.get("executado_em") or ""):
+        for nff in reg.get("nffs") or []:
+            chave = normaliza_nff(nff.get("nff"))
+            if chave:
+                indice[chave] = {
+                    "run_id": reg.get("run_id"),
+                    "executado_em": reg.get("executado_em"),
+                    "usuario": reg.get("usuario"),
+                }
+    return indice
+
+
 def obter_token_graph():
     """Token client_credentials do Graph com as credenciais do jobs_backoffice/.env.
 
@@ -241,14 +347,20 @@ def upload_sharepoint(token, drive_id, pasta_shp):
 
 
 def registrar_run(df, conf, parametros=None, pasta=PASTA_LOCAL_PADRAO):
-    """Grava o log do run e tenta subir os pendentes. Nunca levanta exceção."""
+    """Grava o log do run e tenta subir os pendentes. Nunca levanta exceção.
+
+    Devolve o que aconteceu, para quem quiser mostrar (o notebook ignora):
+        "ok"       — gravou local e subiu tudo ao SharePoint
+        "pendente" — gravou local, mas algo não subiu (sobe no próximo run)
+        "falhou"   — nem o log local foi gravado (a NFF vira "manual" no KPI)
+    """
     try:
         registro = montar_registro(df, parametros)
         arquivo = salvar_local(registro, pasta)
         print(f"[LOG QUICK INVOICES] {registro['qtd_nffs']} NFF(s) registradas em {arquivo.name}")
     except Exception as e:  # noqa: BLE001
         print(f"[LOG QUICK INVOICES] ⚠ não foi possível gravar o log local: {e}")
-        return
+        return "falhou"
 
     try:
         model_parameters = conf["model_parameters"]
@@ -261,9 +373,10 @@ def registrar_run(df, conf, parametros=None, pasta=PASTA_LOCAL_PADRAO):
             f"[LOG QUICK INVOICES] ⚠ upload para o SharePoint falhou ({e}). "
             f"O log ficou em {Path(pasta) / 'pendentes'} e sobe no próximo run."
         )
-        return
+        return "pendente"
 
     if enviados:
         print(f"[LOG QUICK INVOICES] {len(enviados)} arquivo(s) enviados ao SharePoint.")
     for nome, erro in falhas:
         print(f"[LOG QUICK INVOICES] ⚠ {nome} não subiu ({erro}); fica pendente.")
+    return "pendente" if falhas else "ok"

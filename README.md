@@ -14,14 +14,21 @@ corrigir e evoluir.
 
 | Automação | O que resolve | Onde | Doc |
 | --- | --- | --- | --- |
-| **Monitor NFF** (app desktop) | Por usina e por mês: a fatura CUSD chegou? no prazo? foi paga? | `scripts/jobs_backoffice/monitor_nff_app/` | [README](scripts/jobs_backoffice/monitor_nff_app/README.md) |
+| **Monitor NFF** (app desktop) | Por usina e por mês: a fatura CUSD chegou? no prazo? foi paga? Inclui a tela **QuickInvoices Usinas** (ver abaixo) | `scripts/jobs_backoffice/monitor_nff_app/` | [README](scripts/jobs_backoffice/monitor_nff_app/README.md) |
 | **NFF de parceiros** | Preenche a planilha ADFDI do Oracle com as NFFs de Débito dos contratos de parceiros | `scripts/jobs_backoffice/faturamento_parceiros/` | [README](scripts/jobs_backoffice/faturamento_parceiros/README.md) |
-| **Quick Invoices CUSD** | Preenche a planilha ADFDI com as NFFs CUSD das usinas (respeitando a lista de bloqueio) | `scripts/app/create_quick_invoices.py` | header do arquivo + [`conf`](scripts/conf/conf_cusd_invoices.yml) |
+| **Quick Invoices CUSD** | Preenche a planilha ADFDI com as NFFs CUSD das usinas (respeitando a lista de bloqueio). Dois jeitos de rodar: o notebook `scripts/notebooks/nb_quick_invoices.ipynb` ou a tela **⚡ QuickInvoices Usinas** do Monitor NFF | `scripts/app/create_quick_invoices.py` | header do arquivo + [`conf`](scripts/conf/conf_cusd_invoices.yml) + [seção no README do monitor](scripts/jobs_backoffice/monitor_nff_app/README.md#quickinvoices-usinas-o-notebook-dentro-do-monitor-em-dois-passos) |
 | **HistRateio** | Consolida o rateio do mês de uma distribuidora no histórico, com acrônimo e CC | `scripts/jobs_backoffice/monit_hist_usina.py` | [MONIT_HIST_USINA.md](scripts/jobs_backoffice/MONIT_HIST_USINA.md) |
 | **Leitores de rateio** | Um leitor por distribuidora (CPFL Paulista, Equatorial GO), todos no mesmo formato | `scripts/jobs_backoffice/rateio/` | [README](scripts/jobs_backoffice/rateio/README.md) |
 | **Diferimento** | Carga histórica e atualização do número da NFe no Snowflake | `scripts/jobs_backoffice/diferimento_historico/` | docstring dos arquivos |
 | **Extrator de demonstrativos** | Extrai os dados de demonstrativos de PDF (COELBA) para planilha | `scripts/jobs_backoffice/extrator_livia.py` | — |
 | **Jobs ad-hoc** | Extração do CRM, extração de NFF AEGEA em PDF, etc. Ferramentas pontuais | `scripts/jobs_backoffice/jobs_adhoc/` | [README](scripts/jobs_backoffice/jobs_adhoc/README.md) |
+
+**Tela QuickInvoices Usinas (Monitor NFF).** Faz o que o notebook faz, em dois passos: **Buscar** (só
+consulta, com a quantidade de dias que você escolher) e **Enviar** (escreve na planilha `CreateQuickInvoices.xlsm`,
+depois de uma confirmação). Cada NFF aparece como `Nova`, `Já no Oracle` ou `Processada` (com data e hora do
+envio), e só as novas vêm marcadas. Usinas barradas e linhas incompletas ficam listadas, com o motivo. O
+envio aceita até **100 NFFs por vez** (limite da aba NFFs do template). Só o envio precisa do Excel e do
+`xlwings` — já está no `requirements.txt` do monitor.
 
 > **Antes de rodar ou mexer em qualquer automação, leia o README dela.** Os READMEs das pastas
 > explicam o porquê das decisões — várias delas existem porque o jeito "óbvio" já quebrou em produção.

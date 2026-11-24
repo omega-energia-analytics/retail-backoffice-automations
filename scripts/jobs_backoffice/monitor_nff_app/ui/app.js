@@ -580,6 +580,327 @@ function exportarHistorico() {
   exportar(linhas, `historico_${hojeStr()}.xlsx`, 'mudanças');
 }
 
+// --- Quick Invoices Usinas ---
+// Dois passos de propósito: Buscar só consulta (nada vai pra planilha); Enviar escreve as
+// linhas MARCADAS. O backend guarda a última busca e o envio usa os `_id` dela — o que a
+// pessoa viu e marcou é exatamente o que vai.
+const QI_PRESETS = [7, 15, 30, 60, 90];
+
+const QI_STATUS_CLASS = {
+  'Nova': 'status-qi-nova',
+  'Já no Oracle': 'status-qi-oracle',
+  'Processada': 'status-qi-processada'
+};
+
+const QI_CHIPS = [
+  { key: 'all',          label: 'Todas',               pred: () => true },
+  { key: 'novas',        label: 'Novas',               pred: l => l.Status === 'Nova' },
+  { key: 'oracle',       label: 'Já no Oracle',        pred: l => l.Status === 'Já no Oracle' },
+  { key: 'processadas',  label: 'Processadas',         pred: l => l.Status === 'Processada' },
+  { key: 'alerta',       label: 'Com alerta',          pred: l => l.Alertas.length > 0 },
+  { key: 'selecionadas', label: 'Selecionadas',        pred: l => l.Selecionada }
+];
+
+state.qi = {
+  linhas: [], filtradas: [], resumo: null, barradas: [], incompletas: [], avisos: [],
+  janela: null, buscadoEm: null, filtroRapido: 'all', status: null
+};
+
+// Os valores vêm do Snowflake; escapa antes de virar HTML.
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function qiCols() {
+  return [
+    { key: '_sel', label: '✔', sortValue: l => l.Selecionada ? 0 : 1,
+      render: (v, l) => `<label class="chk-chegou"><input type="checkbox" data-qi-sel="${l._id}"` +
+        `${l.Selecionada ? ' checked' : ''}></label>` },
+    { key: 'NFF', label: 'NFF', render: v => copyCell(v) },
+    { key: 'Acrônimo', label: 'Acrônimo', render: v => esc(v) || '—' },
+    { key: 'Unidade de Negócio', label: 'Unidade de Negócio', render: v => esc(v) || '<span class="qi-alerta">vazio</span>' },
+    { key: 'Fornecedor', label: 'Fornecedor', render: v => esc(v) || '<span class="qi-alerta">vazio</span>' },
+    { key: 'Valor', label: 'Valor', render: v => v == null ? '—' : brl(v) },
+    { key: 'Emissão', label: 'Emissão', render: v => dataBR(v) },
+    { key: 'Vencimento', label: 'Vencimento', render: v => dataBR(v) },
+    // Processada traz quando foi enviada — é a informação que a pessoa procura ali.
+    { key: 'Status', label: 'Status', render: (v, l) =>
+        `<span class="status ${QI_STATUS_CLASS[v] || 'status-neutro'}" title="${esc(l.Detalhe)}">${esc(v)}</span>` +
+        (l['Processada Em'] ? ` <span class="qi-quando">${qiDataHora(l['Processada Em'])}</span>` : '') },
+    { key: 'Alertas', label: 'Alertas', sortValue: l => l.Alertas.length,
+      render: v => v.length ? `<span class="qi-alerta" title="${esc(v.join(', '))}">⚠ ${esc(v.join(', '))}</span>` : '—' }
+  ];
+}
+
+// '2026-11-24T09:30:00-03:00' -> '24/11/2026 09:30'
+function qiDataHora(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  }).replace(',', '');
+}
+
+function qiRowClass(l) {
+  if (l.Alertas.length) return 'row-warn';
+  if (l.Status === 'Processada') return 'row-ok';
+  return '';
+}
+
+const qiSelecionadas = () => state.qi.linhas.filter(l => l.Selecionada);
+
+function qiRenderPresets() {
+  const dias = parseInt(document.getElementById('qi-dias').value, 10);
+  const el = document.getElementById('qi-presets');
+  el.innerHTML = QI_PRESETS.map(d =>
+    `<button class="chip${d === dias ? ' active' : ''}" data-qi-preset="${d}">${d}d</button>`).join('');
+  el.querySelectorAll('.chip').forEach(btn => {
+    btn.onclick = () => {
+      document.getElementById('qi-dias').value = btn.dataset.qiPreset;
+      qiRenderPresets();
+    };
+  });
+}
+
+function qiRenderInfo() {
+  const st = state.qi.status;
+  const el = document.getElementById('qi-info');
+  if (!st) { el.textContent = '—'; return; }
+  let html = `Planilha de destino: <code>${esc(st.planilha || '—')}</code>. ` +
+    `Buscar só consulta — nada é gravado até você clicar em <strong>Enviar</strong>.`;
+  if (!st.xlwings_ok) html += ' <span class="qi-alerta">⚠ xlwings não instalado: o envio não vai funcionar (pip install -r requirements.txt).</span>';
+  else if (!st.planilha_existe) html += ' <span class="qi-alerta">⚠ planilha não encontrada nesse caminho.</span>';
+  el.innerHTML = html;
+}
+
+function qiMostrar(el, html) { document.getElementById(el).innerHTML = html; }
+
+function qiRenderAvisos() {
+  qiMostrar('qi-avisos', state.qi.avisos.map(a => `<div class="qi-aviso">⚠ ${esc(a)}</div>`).join(''));
+}
+
+function qiRenderCards() {
+  const r = state.qi.resumo;
+  const el = document.getElementById('qi-cards');
+  if (!r) { el.innerHTML = ''; return; }
+  const n = s => r.por_status[s] || 0;
+  const cards = [
+    { label: 'Encontradas', value: r.total, sub: brl(r.valor_total), cls: '', chip: 'all' },
+    { label: 'Novas', value: n('Nova'), cls: 'ok', chip: 'novas' },
+    { label: 'Já no Oracle', value: n('Já no Oracle'), cls: '', chip: 'oracle' },
+    { label: 'Processadas', value: n('Processada'), cls: '', chip: 'processadas' },
+    { label: 'Com alerta', value: r.com_alerta, cls: r.com_alerta ? 'warn' : '', chip: 'alerta' },
+    { label: 'Usinas barradas', value: state.qi.barradas.length, cls: '', det: 'qi-det-barradas' },
+    { label: 'Incompletas', value: state.qi.incompletas.length, cls: state.qi.incompletas.length ? 'warn' : '', det: 'qi-det-incompletas' }
+  ];
+  el.innerHTML = cards.map(c =>
+    `<div class="card ${c.cls}" ${c.chip ? `data-qi-chip="${c.chip}"` : `data-qi-det="${c.det}"`}>` +
+    `<div class="label">${c.label}</div><div class="value">${c.value}</div>` +
+    (c.sub ? `<div class="sub">${c.sub}</div>` : '') + `</div>`).join('');
+  el.querySelectorAll('.card').forEach(card => {
+    card.onclick = () => {
+      if (card.dataset.qiChip) { state.qi.filtroRapido = card.dataset.qiChip; qiAplicarFiltros(); return; }
+      const det = document.getElementById(card.dataset.qiDet);
+      det.open = true;
+      det.scrollIntoView({ behavior: 'smooth' });
+    };
+  });
+}
+
+function qiRenderChips() {
+  const el = document.getElementById('qi-chips');
+  el.innerHTML = QI_CHIPS.map(c => {
+    const n = state.qi.linhas.filter(c.pred).length;
+    return `<button class="chip${state.qi.filtroRapido === c.key ? ' active' : ''}" data-qi-chip="${c.key}">` +
+      `${c.label}<span class="chip-count">${n}</span></button>`;
+  }).join('');
+  el.querySelectorAll('.chip').forEach(btn => {
+    btn.onclick = () => { state.qi.filtroRapido = btn.dataset.qiChip; qiAplicarFiltros(); };
+  });
+}
+
+function qiAplicarFiltros() {
+  const txt = document.getElementById('qi-filter-text').value.toLowerCase();
+  const chip = QI_CHIPS.find(c => c.key === state.qi.filtroRapido) || QI_CHIPS[0];
+  state.qi.filtradas = state.qi.linhas.filter(l => {
+    if (!chip.pred(l)) return false;
+    if (!txt) return true;
+    return `${l.NFF ?? ''} ${l['Acrônimo'] ?? ''} ${l['Unidade de Negócio'] ?? ''} ${l.Fornecedor ?? ''}`
+      .toLowerCase().includes(txt);
+  });
+  qiRenderChips();
+  renderTable('tbl-qi', state.qi.filtradas, qiCols(), qiRowClass);
+  qiAtualizarSelecao();
+}
+
+// Resumo da seleção + estado do botão Enviar. Não re-renderiza a tabela (perderia o scroll).
+function qiAtualizarSelecao() {
+  const sel = qiSelecionadas();
+  const limite = state.qi.status ? state.qi.status.limite_linhas : 100;
+  const valor = sel.reduce((s, l) => s + (l.Valor || 0), 0);
+  const badge = document.getElementById('qi-sel-info');
+  const btn = document.getElementById('btn-qi-enviar');
+  badge.textContent = `${sel.length} selecionada${sel.length === 1 ? '' : 's'} · ${brl(valor)}`;
+  const st = state.qi.status;
+  const excel = st && st.xlwings_ok && st.planilha_existe;
+  const acima = sel.length > limite;
+  btn.disabled = !sel.length || acima || !excel;
+  btn.title = !excel ? 'Planilha ou xlwings indisponível (veja o aviso acima)'
+    : acima ? `A planilha comporta ${limite} NFFs por vez — desmarque ${sel.length - limite}`
+    : 'Escreve as NFFs marcadas na planilha';
+  badge.style.color = acima ? 'var(--warn)' : '';
+}
+
+function qiRenderTudo() {
+  qiRenderAvisos();
+  qiRenderCards();
+  qiAplicarFiltros();
+  const b = state.qi.barradas, i = state.qi.incompletas;
+  qiMostrar('qi-sum-barradas', `Usinas barradas (${b.length})`);
+  qiMostrar('qi-sum-incompletas', `Linhas incompletas (${i.length})`);
+  const cols = [
+    { key: 'NFF', label: 'NFF', render: v => copyCell(v) },
+    { key: 'Acrônimo', label: 'Acrônimo', render: v => esc(v) || '—' },
+    { key: 'Unidade de Negócio', label: 'Unidade de Negócio', render: v => esc(v) || '—' },
+    { key: 'Valor', label: 'Valor', render: v => v == null ? '—' : brl(v) },
+    { key: 'Emissão', label: 'Emissão', render: v => dataBR(v) },
+    { key: 'Motivo', label: 'Motivo', render: v => esc(v) }
+  ];
+  renderTable('tbl-qi-barradas', b, cols);
+  renderTable('tbl-qi-incompletas', i, cols);
+}
+
+async function qiOnOpen() {
+  const ate = document.getElementById('qi-ate');
+  if (!ate.value) ate.value = hojeStr();
+  qiRenderPresets();
+  if (!state.qi.status) {
+    state.qi.status = await call(() => api().qi_status());
+  }
+  qiRenderInfo();
+  qiAtualizarSelecao();
+}
+
+async function qiBuscar() {
+  const dias = document.getElementById('qi-dias').value;
+  const ate = document.getElementById('qi-ate').value || null;
+  qiMostrar('qi-resultado', '');
+  const r = await call(() => api().qi_buscar(dias, ate));
+  if (!r) return;
+  Object.assign(state.qi, {
+    linhas: r.linhas, resumo: r.resumo, barradas: r.barradas, incompletas: r.incompletas,
+    avisos: r.avisos, janela: r.janela, buscadoEm: r.buscado_em, filtroRapido: 'all'
+  });
+  qiRenderTudo();
+  const j = r.janela;
+  toast(`${r.resumo.total} NFFs entre ${dataBR(j.de)} e ${dataBR(j.ate)}`, 'success');
+}
+
+// "Padrão" vem do backend: a mesma regra da seleção inicial (Nova, sem alerta, sem versão
+// cancelada no Oracle). O que já foi processada fica de fora.
+function qiSelecionarNovas() {
+  const limite = state.qi.status ? state.qi.status.limite_linhas : 100;
+  let marcadas = 0;
+  state.qi.linhas.forEach(l => {
+    l.Selecionada = !!l['Padrão'] && l.Status === 'Nova' && marcadas < limite;
+    if (l.Selecionada) marcadas++;
+  });
+  qiAplicarFiltros();
+  const total = state.qi.linhas.filter(l => l['Padrão'] && l.Status === 'Nova').length;
+  if (total > limite) toast(`Há ${total} novas; marquei as primeiras ${limite} (limite da planilha). Envie, faça o upload e busque de novo.`);
+}
+
+function qiLimparSelecao() {
+  state.qi.linhas.forEach(l => { l.Selecionada = false; });
+  qiAplicarFiltros();
+}
+
+// Confirmação antes de escrever: o envio SUBSTITUI o conteúdo das colunas da aba NFFs, e não
+// há como desfazer pelo app. O texto diz o que vai acontecer e destaca o que merece atenção.
+function qiPedirEnvio() {
+  const sel = qiSelecionadas();
+  if (!sel.length) return;
+  const valor = sel.reduce((s, l) => s + (l.Valor || 0), 0);
+  const noOracle = sel.filter(l => l.Status === 'Já no Oracle');
+  const processadas = sel.filter(l => l.Status === 'Processada');
+  const comAlerta = sel.filter(l => l.Alertas.length);
+  let html = `<p><strong>${sel.length}</strong> NFF${sel.length === 1 ? '' : 's'} · <strong>${brl(valor)}</strong> ` +
+    `para <code>${esc(state.qi.status.planilha)}</code>.</p>` +
+    `<p>Isto <strong>substitui</strong> o que estiver hoje nas colunas preenchidas da aba NFFs. ` +
+    `Se a planilha estiver fechada, o Excel abre sozinho. Depois é só revisar e fazer o Upload no Oracle.</p>`;
+  const s = n => n === 1 ? '' : 's';
+  if (noOracle.length) html += `<p class="atencao">⚠ ${noOracle.length} marcada${s(noOracle.length)} ` +
+    `já ${noOracle.length === 1 ? 'consta' : 'constam'} no Oracle. Enviar de novo pode duplicar a nota.</p>`;
+  if (processadas.length) html += `<p class="atencao">⚠ ${processadas.length} marcada${s(processadas.length)} ` +
+    `já ${processadas.length === 1 ? 'foi processada' : 'foram processadas'} antes (veja a data na coluna Status). ` +
+    `Reenvie só se o Upload no Oracle não foi feito.</p>`;
+  if (comAlerta.length) html += `<p class="atencao">⚠ ${comAlerta.length} NFF${comAlerta.length === 1 ? '' : 's'} com alerta ` +
+    `(campo vazio ou valor zerado) ${comAlerta.length === 1 ? 'vai' : 'vão'} assim para a planilha.</p>`;
+  qiMostrar('qi-modal-corpo', html);
+  document.getElementById('qi-modal').classList.remove('hidden');
+}
+
+function qiFecharModal() { document.getElementById('qi-modal').classList.add('hidden'); }
+
+async function qiConfirmarEnvio() {
+  qiFecharModal();
+  const ids = qiSelecionadas().map(l => l._id);
+  const r = await call(() => api().qi_enviar(ids));
+  if (!r) return;
+  // Reflete o que o backend já marcou: enviadas agora, fora da seleção.
+  const idsEnviados = new Set(r.ids);
+  state.qi.linhas.forEach(l => {
+    if (idsEnviados.has(l._id)) {
+      l.Status = 'Processada'; l.Selecionada = false;
+      l['Processada Em'] = r.processada_em; l['Processada Por'] = r.processada_por;
+      l.Detalhe = `Processada por ${r.processada_por} em ${qiDataHora(r.processada_em)}.`;
+    }
+  });
+  state.qi.resumo = {
+    ...state.qi.resumo,
+    por_status: state.qi.linhas.reduce((m, l) => { m[l.Status] = (m[l.Status] || 0) + 1; return m; }, {})
+  };
+  const logTxt = {
+    ok: 'Log do KPI registrado.',
+    pendente: 'Log do KPI gravado localmente; o envio ao SharePoint fica pendente e sobe no próximo envio.',
+    falhou: 'ATENÇÃO: o log do KPI não foi gravado — estas NFFs vão contar como manuais.'
+  }[r.log] || '';
+  const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  qiMostrar('qi-resultado',
+    `<div class="qi-aviso ${r.log === 'falhou' ? 'erro' : 'sucesso'}">✔ ${r.enviadas} NFFs (${brl(r.valor_total)}) ` +
+    `escritas na planilha às ${hora}. ${esc(logTxt)} Próximo passo: revise a aba NFFs e faça o Upload no Oracle.</div>`);
+  qiRenderCards();
+  qiAplicarFiltros();
+  toast(`${r.enviadas} NFFs enviadas para a planilha`, 'success');
+}
+
+function exportarQi() {
+  const linhas = state.qi.filtradas.map(l => ({
+    'NFF': l.NFF,
+    'Acrônimo': l['Acrônimo'],
+    'Unidade de Negócio': l['Unidade de Negócio'],
+    'Fornecedor': l.Fornecedor,
+    'Valor': l.Valor,
+    'Emissão': dataBR(l['Emissão']),
+    'Vencimento': dataBR(l.Vencimento),
+    'Status': l.Status,
+    'Processada Em': l['Processada Em'] ? qiDataHora(l['Processada Em']) : '',
+    'Processada Por': l['Processada Por'] || '',
+    'Detalhe': l.Detalhe,
+    'Alertas': l.Alertas.join(', '),
+    'Selecionada': l.Selecionada ? 'Sim' : 'Não'
+  }));
+  const j = state.qi.janela;
+  const info = [
+    ['Exportado em', new Date().toLocaleString('pt-BR')],
+    ['Busca feita em', state.qi.buscadoEm ? new Date(state.qi.buscadoEm).toLocaleString('pt-BR') : '—'],
+    ['Janela (data de emissão)', j ? `${dataBR(j.de)} a ${dataBR(j.ate)} (${j.dias} dias)` : '—'],
+    ['Linhas exportadas', linhas.length],
+    ['Linhas encontradas (sem filtro)', state.qi.linhas.length],
+    ['Usinas barradas no período', state.qi.barradas.length],
+    ['Linhas incompletas no período', state.qi.incompletas.length]
+  ];
+  exportar(linhas, `quickinvoices_usinas_${hojeStr()}.xlsx`, 'NFFs', info);
+}
+
 // --- seletor de mês ---
 // Popula todos os <select class="sel-mes"> (dashboard + faturas) a partir de
 // state.mesesDisponiveis, marcando o mês selecionado.
@@ -880,6 +1201,13 @@ async function refreshData() {
     toast('Planilha recarregada', 'success');
     return;
   }
+  // Quick Invoices tem busca própria e a pessoa trabalha em cima de uma SELEÇÃO. Refazer a
+  // busca aqui (e o auto-atualizar de 15 min cai neste caminho) apagaria as marcações sem
+  // aviso — a busca é sempre um clique em "Buscar".
+  if (active === 'quickinvoices') {
+    toast('Nesta tela a busca é pelo botão Buscar — a seleção foi mantida.');
+    return;
+  }
   // O histórico lê o SQLite local, que só ganha linha quando a base recarrega.
   // Reconsultar o banco aqui é barato e é o que o usuário espera; puxar o
   // Snowflake de novo não traria nada que ele já não tenha escrito.
@@ -926,6 +1254,7 @@ function switchView(view) {
   if (view === 'dashboard') loadDashboard();
   if (view === 'faturas') loadFaturas();
   if (view === 'parceiros') loadParceiros();
+  if (view === 'quickinvoices') qiOnOpen();
   if (view === 'historico') loadHistorico();
   if (view === 'nffs') loadNffs();
   if (view === 'excel') carregarConfig();
@@ -971,6 +1300,31 @@ function init() {
     // Este reconsulta o banco (o corte é no SQL), diferente do filtro de campo.
     document.getElementById('chk-carga-inicial').onchange = loadHistorico;
     document.getElementById('btn-export-historico').onclick = exportarHistorico;
+
+    // Quick Invoices Usinas
+    document.getElementById('btn-qi-buscar').onclick = qiBuscar;
+    ['qi-dias', 'qi-ate'].forEach(id => {
+      document.getElementById(id).onkeydown = e => { if (e.key === 'Enter') qiBuscar(); };
+    });
+    document.getElementById('qi-dias').oninput = qiRenderPresets;
+    document.getElementById('qi-filter-text').oninput = qiAplicarFiltros;
+    document.getElementById('btn-qi-sel-novas').onclick = qiSelecionarNovas;
+    document.getElementById('btn-qi-sel-limpar').onclick = qiLimparSelecao;
+    document.getElementById('btn-export-qi').onclick = exportarQi;
+    document.getElementById('btn-qi-enviar').onclick = qiPedirEnvio;
+    document.getElementById('qi-modal-cancelar').onclick = qiFecharModal;
+    document.getElementById('qi-modal-ok').onclick = qiConfirmarEnvio;
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') qiFecharModal(); });
+    // checkbox da tabela: a tabela é re-renderizada a cada filtro, então delegação
+    document.addEventListener('change', e => {
+      const chk = e.target.closest('input[data-qi-sel]');
+      if (!chk) return;
+      const linha = state.qi.linhas.find(l => l._id === Number(chk.dataset.qiSel));
+      if (linha) linha.Selecionada = chk.checked;
+      qiAtualizarSelecao();
+      // chip "Selecionadas" e o contador dependem da marcação
+      qiRenderChips();
+    });
 
     document.getElementById('search-nff').oninput = applyNffFilter;
     document.getElementById('btn-processar').onclick = processarExcel;

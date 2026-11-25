@@ -1489,3 +1489,19 @@ def test_valor_fatura_usa_total_do_fw_e_cai_no_oracle():
     r = _por_acronimo(monitor.montar_mes(merged, projetos, 2026, 11, hoje=HOJE_SEX))
     assert r['A-01']['Valor Fatura'] == 1234.56
     assert r['B-01']['Valor Fatura'] == 500.0
+
+
+# --- selo de frescura: UPLOADED_AT do FW chega em UTC, a tela mostra BRT ---
+
+def test_utc_para_brt_subtrai_tres_horas():
+    # lote das 04h BRT aparece como 07:12 no UPLOADED_AT (medido em 25/11/2026)
+    assert monitor._utc_para_brt_iso('2026-11-25 07:12:28') == '2026-11-25T04:12:28'
+
+
+def test_utc_para_brt_atravessa_a_meia_noite():
+    assert monitor._utc_para_brt_iso(datetime(2026, 11, 25, 1, 30, 0)) == '2026-11-24T22:30:00'
+
+
+def test_utc_para_brt_vazio_ou_lixo_vira_none():
+    assert monitor._utc_para_brt_iso(None) is None
+    assert monitor._utc_para_brt_iso('nao e data') is None

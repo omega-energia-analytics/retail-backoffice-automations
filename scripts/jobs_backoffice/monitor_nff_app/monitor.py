@@ -6,7 +6,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import snowflake.connector as snowflake
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # sobe 2 níveis: monitor_nff_app -> jobs_backoffice -> retail-apps
@@ -575,6 +575,55 @@ def _carregar_pagamentos(conn, mp):
     return df_pag, df_inst
 
 
+# Frescura do FattureWeb no Snowflake: instante da última carga FW -> Snowflake, já em BRT
+# (ISO, sem fuso). Fica em variável de módulo, e não no retorno de carregar_base(), porque
+# a aba KPIs do observability consome essa função e desempacota (df_merged, df_projetos).
+ULTIMA_CARGA_FW = None
+
+# O flow que grava a CONSUMPTION_BILL_HISTORY_API (repo fattureweb-ingestion-service)
+# carimba UPLOADED_AT com datetime.now() numa VM em UTC, mas agenda o cron em BRT
+# (America/Sao_Paulo): o lote das 04h BRT aparece como 07:12 no UPLOADED_AT (medido em
+# 25/11/2026). Brasil sem horário de verão desde 2019, então a diferença é fixa.
+_UPLOADED_AT_UTC_PARA_BRT = timedelta(hours=-3)
+
+
+def _utc_para_brt_iso(valor):
+    """UPLOADED_AT (UTC) -> ISO em BRT, ou None se vazio/ilegível."""
+    if valor is None:
+        return None
+    ts = pd.to_datetime(valor, errors='coerce')
+    if pd.isna(ts):
+        return None
+    return (ts + _UPLOADED_AT_UTC_PARA_BRT).isoformat(timespec='seconds')
+
+
+def _ler_carga_fw(conn):
+    """Quando o Snowflake recebeu o FattureWeb pela última vez (ISO, BRT) ou None.
+
+    Lê direto da tabela bruta porque a view FATTUREWEB_USINAS não expõe UPLOADED_AT.
+    É só informativo (o selo da tela): qualquer falha devolve None e o monitor segue
+    sem ele, em vez de ficar sem base por causa de um carimbo.
+
+    A janela de 7 dias é por desempenho: sem filtro o MAX pode varrer a tabela inteira.
+    UPLOADED_AT é texto 'YYYY-MM-DD HH:MM:SS', então a
+    comparação com string poda a leitura. Sem nenhuma carga em 7 dias devolve None, que
+    na tela aparece como "indisponível" — o que, nesse caso, já é o alarme. O timeout
+    garante que o selo nunca segure a abertura do app.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT MAX(TRY_TO_TIMESTAMP(UPLOADED_AT)) "
+            "FROM CONSUME_PROD.FATTUREWEB.CONSUMPTION_BILL_HISTORY_API "
+            "WHERE UPLOADED_AT >= TO_CHAR(DATEADD(day, -7, CURRENT_TIMESTAMP()), 'YYYY-MM-DD')",
+            timeout=60,
+        )
+        return _utc_para_brt_iso(cur.fetchone()[0])
+    except Exception as e:
+        print(f"[monitor] AVISO: carga do FW indisponível ({type(e).__name__}: {e})", flush=True)
+        return None
+
+
 def carregar_base():
     """Parte cara do pipeline: conecta, roda as queries e devolve o
     `df_merged` (já com DATA_REFERENCIA) + o `df_projetos` estático.
@@ -648,6 +697,10 @@ def carregar_base():
         columns={'DATA_DA_APRESENTACAO_DA_FATURA': 'DATA_APRES_FW', 'NUMERO_DA_INSTALACAO': 'UC'}
     )
     print(f"[monitor] {len(df_fw_keep)} faturas no fattureweb_usinas", flush=True)
+
+    global ULTIMA_CARGA_FW
+    ULTIMA_CARGA_FW = _ler_carga_fw(conn)
+    print(f"[monitor] última carga do FW no Snowflake (BRT): {ULTIMA_CARGA_FW}", flush=True)
 
     df_projetos = pd.DataFrame(
         PROJETOS,

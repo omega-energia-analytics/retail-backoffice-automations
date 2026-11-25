@@ -202,7 +202,10 @@ class Api:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     def ultima_atualizacao(self):
-        return {"ok": True, "data": {"ts": self._cache_ts}}
+        # ts = quando ESTE app consultou o Snowflake; carga_fw = quando o Snowflake recebeu
+        # o FattureWeb (ISO em BRT, ou None). A fatura que a pessoa acabou de inserir no FW
+        # só aparece depois da próxima carga_fw, por mais que o app recarregue.
+        return {"ok": True, "data": {"ts": self._cache_ts, "carga_fw": monitor.ULTIMA_CARGA_FW}}
 
     # --- Exportação ---
     def exportar_excel(self, linhas, nome_sugerido, info=None):

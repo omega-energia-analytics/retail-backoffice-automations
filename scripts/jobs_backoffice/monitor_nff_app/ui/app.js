@@ -9,6 +9,8 @@ const state = {
   sortAsc: true,
   quickFilter: 'all',
   lastUpdateTs: null,
+  // quando o Snowflake recebeu o FattureWeb pela última vez (ISO, BRT) — ver monitor.ULTIMA_CARGA_FW
+  lastLoadFw: null,
   // seletor de mês (recorte por data de apresentação). Default = mês corrente.
   mesSelecionado: null,
   mesesDisponiveis: [],
@@ -1142,6 +1144,7 @@ function infoExportFaturas() {
   return [
     ['Exportado em', new Date().toLocaleString('pt-BR')],
     ['Base consultada no Snowflake em', fmt(state.lastUpdateTs)],
+    ['FattureWeb no Snowflake até (última carga)', state.lastLoadFw ? fmt(state.lastLoadFw) : 'indisponível'],
     ['Mês do painel (por chegada)', `${String(m.mes).padStart(2, '0')}/${m.ano}`],
     ['Linhas exportadas', state.faturasFiltradas.length],
     ['Linhas do mês (sem filtro)', state.faturas.length],
@@ -1180,14 +1183,30 @@ function relTime(iso) {
   return `Atualizado há ${h}h${String(min % 60).padStart(2, '0')}`;
 }
 
+// "FW no Snowflake: hoje 13:12" / "FW no Snowflake: 24/11 17:12". O horário já vem em BRT.
+function fmtCargaFw(iso) {
+  if (!iso) return 'FW no Snowflake: indisponível';
+  const d = new Date(iso);
+  if (isNaN(d)) return 'FW no Snowflake: indisponível';
+  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const hoje = d.toDateString() === new Date().toDateString();
+  const dia = hoje ? 'hoje' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  return `FW no Snowflake: ${dia} ${hm}`;
+}
+
 function renderLastUpdate() {
   document.getElementById('last-update').textContent = relTime(state.lastUpdateTs);
+  document.getElementById('last-load-fw').textContent = fmtCargaFw(state.lastLoadFw);
 }
 
 async function fetchLastUpdate() {
   try {
     const r = await api().ultima_atualizacao();
-    if (r && r.ok) { state.lastUpdateTs = r.data.ts; renderLastUpdate(); }
+    if (r && r.ok) {
+      state.lastUpdateTs = r.data.ts;
+      state.lastLoadFw = r.data.carga_fw || null;
+      renderLastUpdate();
+    }
   } catch (e) { /* não bloqueia a UI */ }
 }
 

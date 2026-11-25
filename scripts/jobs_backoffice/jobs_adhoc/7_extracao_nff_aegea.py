@@ -172,8 +172,8 @@ def parse_bloco(bloco, referencia, pagina):
 def main():
     # Pasta com os PDFs
     # pdf_folder = Path("C:/Users/giovana.lima/OneDrive - Omega Energia S.A/Giovana/Projetos/aegea/Faturas_Piauí_Abril/Todas as Faturas")
-    pdf_folder = Path("C:/Users/leticia.neiva/Serena/Comercializadora - 2. Faturamento Usinas - Parceiros/AEGEA/FATURAS/Faturas_Piauí_Abril/Todas_as_Faturas")
-    pdf_folder = "C:\\Users\\vinicius.azevedo\\Serena\\Comercializadora - OMG\\03 - BackOffice\\13 - Geração Distribuída\\Acompanhamento - Operação GD\\2. Faturamento Usinas - Parceiros\\AEGEA\\FATURAS\\Faturas_Piauí_Setembro\\Todas_as_Faturas"
+    pdf_folder = Path("C:/Users/leticia.neiva/Serena/Comercializadora - 2. Faturamento Usinas - Parceiros/AEGEA/FATURAS/Faturas_Piauí_Maio/Todas_as_Faturas")
+    # pdf_folder = "C:\\Users\\vinicius.azevedo\\Serena\\Comercializadora - OMG\\03 - BackOffice\\13 - Geração Distribuída\\Acompanhamento - Operação GD\\2. Faturamento Usinas - Parceiros\\AEGEA\\FATURAS\\Faturas_Piauí_Setembro\\Todas_as_Faturas"
     # pdf_folder = Path.home() / "Documents" / "AEGEA" / "Faturas_Piauí_Setembro" / "Todas as Faturas"
 
 
@@ -205,8 +205,8 @@ def main():
 
     # Exporta com fallback em caso de arquivo travado
     # output_path = "C:/Users/giovana.lima/OneDrive - Omega Energia S.A/Giovana/Projetos/aegea/Faturas_Piauí_Abrilv5.xlsx"
-    output_path = "C:/Users/leticia.neiva/Serena/Comercializadora - 2. Faturamento Usinas - Parceiros/AEGEA/FATURAS/Faturas_Piauí_Abril.xlsx"
-    output_path = "C:\\Users\\vinicius.azevedo\\Serena\\Comercializadora - OMG\\03 - BackOffice\\13 - Geração Distribuída\\Acompanhamento - Operação GD\\2. Faturamento Usinas - Parceiros\\AEGEA\\FATURAS\\Faturas_Piauí_Setembro.xlsx"
+    output_path = "C:/Users/leticia.neiva/Serena/Comercializadora - 2. Faturamento Usinas - Parceiros/AEGEA/FATURAS/Faturas_Piauí_Setembro.xlsx"
+    # output_path = "C:\\Users\\vinicius.azevedo\\Serena\\Comercializadora - OMG\\03 - BackOffice\\13 - Geração Distribuída\\Acompanhamento - Operação GD\\2. Faturamento Usinas - Parceiros\\AEGEA\\FATURAS\\Faturas_Piauí_Setembro.xlsx"
     # output_path = Path.home() / "Documents" / "AEGEA" / "Faturas_Piauí_Junho.xlsx"
 
     try:

@@ -1,2 +1,2 @@
 select * 
-from retail_dev.backoffice.monitoramento_hist_usina
+from retail_dev.backoffice.v_monitoramento_hist_usina

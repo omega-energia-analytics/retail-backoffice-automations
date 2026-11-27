@@ -48,7 +48,7 @@ Quatro queries, todas resolvidas pelo `conf_cusd_invoices.yml` (nome lógico →
 | `job_monitoramento` | `USINAS_GERACAO` (dbt, `RETAIL_PROD`) | **âncora**: é a única fonte que amarra nota → acrônimo da usina. Desde 15/10/2026 (PROD em 28/10); antes era a `MONITORAMENTO_CUSD_AWS` (lambda) |
 | `pagamentos_usinas` | `ap_oracle_view` (`AP_PAYMENTS` + `AP_INSTALLMENTS`) | as **duas** portas de pagamento do Oracle, numa leitura só |
 | `fattureweb_usinas` | `FATTUREWEB_USINAS` | apresentação, competência, emissão, UC, **endereço** |
-| `hist_usina_livia` | `MONITORAMENTO_HIST_USINA` | cadastro de usinas — de/para UC → acrônimo |
+| `hist_usina_livia` | `V_MONITORAMENTO_HIST_USINA` | cadastro de usinas — de/para UC → acrônimo |
 
 Nenhuma filtra data no servidor: a base vem inteira e o recorte de mês é feito em memória (ver
 cache, abaixo).

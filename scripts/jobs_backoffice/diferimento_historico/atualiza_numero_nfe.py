@@ -1,9 +1,9 @@
 """
-Atualiza a coluna NUMERO_NFE em RETAIL_{env}.BACKOFFICE.DIFERIMENTO_PARCERIAS_TESTE
+Atualiza a coluna NUMERO_NFE em RETAIL_{env}.BACKOFFICE.DIFERIMENTO_PARCERIAS
 a partir do Excel que a Ana preenche manualmente (conectado via ODBC na view/tabela).
 
 A chave de UPDATE é ID_REGISTRO (PK estavel exposta pelo model dbt), nunca uma
-coluna de negocio - ver models/schemas/diferimento_parcerias_teste.yml.
+coluna de negocio - ver models/schemas/diferimento_parcerias.yml.
 
 O valor de NUMERO_NFE no Excel e sempre sobrescrito na tabela tal como vier,
 inclusive vazio: quem preenche essa coluna e exclusivamente a Ana, entao vazio
@@ -150,7 +150,7 @@ def main():
 
     env_vars = load_env(ENV_PATH)
     database = f"RETAIL_{ENV.upper()}"
-    table = f"{database}.BACKOFFICE.DIFERIMENTO_PARCERIAS_TESTE"
+    table = f"{database}.BACKOFFICE.DIFERIMENTO_PARCERIAS"
 
     df = read_updates(excel_path)
     print(f"{len(df)} linha(s) lida(s) do Excel.")
